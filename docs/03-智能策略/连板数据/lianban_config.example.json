@@ -1,0 +1,16 @@
+{
+  "data_source": "em",
+  "tushare_token": "",
+  "tushare_token_env": "TUSHARE_TOKEN",
+  "read_token_from": "../../../utils/configure/config.json",
+  "read_token_field": "ts_token",
+  "fallback_to_em": true,
+  "trade_days_target": 15,
+  "lookback_pairs": 10,
+  "validate_pairs": 0,
+  "min_boards": 2,
+  "laplace_alpha": 1.0,
+  "shrink_to_overall": 0.15,
+  "zt_reason_source": "ths",
+  "zt_reason_fallback": true
+}

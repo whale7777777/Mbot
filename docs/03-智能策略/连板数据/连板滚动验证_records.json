@@ -1,0 +1,478 @@
+[
+  {
+    "T": "20260518",
+    "T1": "20260519",
+    "code": "001259",
+    "name": "利仁科技",
+    "boards": 6,
+    "pred_base": 0.13672014260249554,
+    "pred_v1": 0.13672014260249554,
+    "actual": 1,
+    "factors": {
+      "early_seal": true,
+      "zero_zhaban": false,
+      "heavy_seal": false
+    },
+    "pred_calibrated": 0.34504627325581394,
+    "pred_final": 0.34504627325581394
+  },
+  {
+    "T": "20260518",
+    "T1": "20260519",
+    "code": "603779",
+    "name": "威龙股份",
+    "boards": 4,
+    "pred_base": 0.43076776165011454,
+    "pred_v1": 0.43076776165011454,
+    "actual": 1,
+    "factors": {
+      "early_seal": true,
+      "zero_zhaban": true,
+      "heavy_seal": true
+    },
+    "pred_calibrated": 0.3546033425053849,
+    "pred_final": 0.3546033425053849
+  },
+  {
+    "T": "20260518",
+    "T1": "20260519",
+    "code": "002374",
+    "name": "中锐股份",
+    "boards": 2,
+    "pred_base": 0.2764726293015471,
+    "pred_v1": 0.2764726293015471,
+    "actual": 0,
+    "factors": {
+      "early_seal": true,
+      "zero_zhaban": false,
+      "heavy_seal": false
+    },
+    "pred_calibrated": 0.2756914088372093,
+    "pred_final": 0.2343376975116279
+  },
+  {
+    "T": "20260518",
+    "T1": "20260519",
+    "code": "601133",
+    "name": "柏诚股份",
+    "boards": 2,
+    "pred_base": 0.2764726293015471,
+    "pred_v1": 0.2764726293015471,
+    "actual": 0,
+    "factors": {
+      "early_seal": true,
+      "zero_zhaban": true,
+      "heavy_seal": false
+    },
+    "pred_calibrated": 0.23750814871325582,
+    "pred_final": 0.20188192640626743
+  },
+  {
+    "T": "20260518",
+    "T1": "20260519",
+    "code": "600578",
+    "name": "京能电力",
+    "boards": 4,
+    "pred_base": 0.43076776165011454,
+    "pred_v1": 0.43076776165011454,
+    "actual": 0,
+    "factors": {
+      "early_seal": true,
+      "zero_zhaban": false,
+      "heavy_seal": true
+    },
+    "pred_calibrated": 0.41161154092325575,
+    "pred_final": 0.41161154092325575
+  },
+  {
+    "T": "20260518",
+    "T1": "20260519",
+    "code": "603082",
+    "name": "北自科技",
+    "boards": 3,
+    "pred_base": 0.39916895505130795,
+    "pred_v1": 0.39916895505130795,
+    "actual": 1,
+    "factors": {
+      "early_seal": true,
+      "zero_zhaban": false,
+      "heavy_seal": false
+    },
+    "pred_calibrated": 0.42104285581395345,
+    "pred_final": 0.42104285581395345
+  },
+  {
+    "T": "20260518",
+    "T1": "20260519",
+    "code": "603311",
+    "name": "金海高科",
+    "boards": 2,
+    "pred_base": 0.2764726293015471,
+    "pred_v1": 0.2764726293015471,
+    "actual": 1,
+    "factors": {
+      "early_seal": true,
+      "zero_zhaban": false,
+      "heavy_seal": false
+    },
+    "pred_calibrated": 0.2756914088372093,
+    "pred_final": 0.2343376975116279
+  },
+  {
+    "T": "20260518",
+    "T1": "20260519",
+    "code": "601678",
+    "name": "滨化股份",
+    "boards": 2,
+    "pred_base": 0.2764726293015471,
+    "pred_v1": 0.2764726293015471,
+    "actual": 0,
+    "factors": {
+      "early_seal": true,
+      "zero_zhaban": false,
+      "heavy_seal": true
+    },
+    "pred_calibrated": 0.2573027918677674,
+    "pred_final": 0.2187073730876023
+  },
+  {
+    "T": "20260518",
+    "T1": "20260519",
+    "code": "002421",
+    "name": "达实智能",
+    "boards": 2,
+    "pred_base": 0.2764726293015471,
+    "pred_v1": 0.2764726293015471,
+    "actual": 1,
+    "factors": {
+      "early_seal": true,
+      "zero_zhaban": true,
+      "heavy_seal": true
+    },
+    "pred_calibrated": 0.22166635519408168,
+    "pred_final": 0.18841640191496942
+  },
+  {
+    "T": "20260519",
+    "T1": "20260520",
+    "code": "000417",
+    "name": "合百集团",
+    "boards": 2,
+    "pred_base": 0.2796378887070376,
+    "pred_v1": 0.2796378887070376,
+    "actual": 0,
+    "factors": {
+      "early_seal": true,
+      "zero_zhaban": true,
+      "heavy_seal": true
+    },
+    "pred_calibrated": 0.22166635519408168,
+    "pred_final": 0.18841640191496942
+  },
+  {
+    "T": "20260519",
+    "T1": "20260520",
+    "code": "002421",
+    "name": "达实智能",
+    "boards": 3,
+    "pred_base": 0.4104979314420804,
+    "pred_v1": 0.4104979314420804,
+    "actual": 0,
+    "factors": {
+      "early_seal": true,
+      "zero_zhaban": true,
+      "heavy_seal": true
+    },
+    "pred_calibrated": 0.33853443465079675,
+    "pred_final": 0.33853443465079675
+  },
+  {
+    "T": "20260519",
+    "T1": "20260520",
+    "code": "603779",
+    "name": "威龙股份",
+    "boards": 5,
+    "pred_base": 0.4523556231003039,
+    "pred_v1": 0.4523556231003039,
+    "actual": 0,
+    "factors": {
+      "early_seal": true,
+      "zero_zhaban": true,
+      "heavy_seal": true
+    },
+    "pred_calibrated": 0.3420432155952354,
+    "pred_final": 0.3420432155952354
+  },
+  {
+    "T": "20260519",
+    "T1": "20260520",
+    "code": "603082",
+    "name": "北自科技",
+    "boards": 4,
+    "pred_base": 0.437782579787234,
+    "pred_v1": 0.437782579787234,
+    "actual": 0,
+    "factors": {
+      "early_seal": true,
+      "zero_zhaban": true,
+      "heavy_seal": true
+    },
+    "pred_calibrated": 0.3546033425053849,
+    "pred_final": 0.3546033425053849
+  },
+  {
+    "T": "20260519",
+    "T1": "20260520",
+    "code": "001259",
+    "name": "利仁科技",
+    "boards": 7,
+    "pred_base": 0.33011968085106386,
+    "pred_v1": 0.33011968085106386,
+    "actual": 0,
+    "factors": {
+      "early_seal": true,
+      "zero_zhaban": true,
+      "heavy_seal": false
+    },
+    "pred_calibrated": 0.15879616781395348,
+    "pred_final": 0.15879616781395348
+  },
+  {
+    "T": "20260519",
+    "T1": "20260520",
+    "code": "600903",
+    "name": "贵州燃气",
+    "boards": 2,
+    "pred_base": 0.2796378887070376,
+    "pred_v1": 0.2796378887070376,
+    "actual": 0,
+    "factors": {
+      "early_seal": true,
+      "zero_zhaban": false,
+      "heavy_seal": false
+    },
+    "pred_calibrated": 0.2756914088372093,
+    "pred_final": 0.2343376975116279
+  },
+  {
+    "T": "20260519",
+    "T1": "20260520",
+    "code": "002552",
+    "name": "宝鼎科技",
+    "boards": 2,
+    "pred_base": 0.2796378887070376,
+    "pred_v1": 0.2796378887070376,
+    "actual": 0,
+    "factors": {
+      "early_seal": true,
+      "zero_zhaban": true,
+      "heavy_seal": true
+    },
+    "pred_calibrated": 0.22166635519408168,
+    "pred_final": 0.18841640191496942
+  },
+  {
+    "T": "20260519",
+    "T1": "20260520",
+    "code": "002272",
+    "name": "川润股份",
+    "boards": 2,
+    "pred_base": 0.2796378887070376,
+    "pred_v1": 0.2796378887070376,
+    "actual": 0,
+    "factors": {
+      "early_seal": true,
+      "zero_zhaban": false,
+      "heavy_seal": false
+    },
+    "pred_calibrated": 0.2756914088372093,
+    "pred_final": 0.2343376975116279
+  },
+  {
+    "T": "20260519",
+    "T1": "20260520",
+    "code": "002208",
+    "name": "合肥城建",
+    "boards": 2,
+    "pred_base": 0.2796378887070376,
+    "pred_v1": 0.2796378887070376,
+    "actual": 0,
+    "factors": {
+      "early_seal": true,
+      "zero_zhaban": false,
+      "heavy_seal": true
+    },
+    "pred_calibrated": 0.2573027918677674,
+    "pred_final": 0.2187073730876023
+  },
+  {
+    "T": "20260519",
+    "T1": "20260520",
+    "code": "603206",
+    "name": "嘉环科技",
+    "boards": 2,
+    "pred_base": 0.2796378887070376,
+    "pred_v1": 0.2796378887070376,
+    "actual": 0,
+    "factors": {
+      "early_seal": true,
+      "zero_zhaban": true,
+      "heavy_seal": true
+    },
+    "pred_calibrated": 0.22166635519408168,
+    "pred_final": 0.18841640191496942
+  },
+  {
+    "T": "20260519",
+    "T1": "20260520",
+    "code": "300657",
+    "name": "弘信电子",
+    "boards": 2,
+    "pred_base": 0.2796378887070376,
+    "pred_v1": 0.2796378887070376,
+    "actual": 0,
+    "factors": {
+      "early_seal": true,
+      "zero_zhaban": true,
+      "heavy_seal": true
+    },
+    "pred_calibrated": 0.22166635519408168,
+    "pred_final": 0.18841640191496942
+  },
+  {
+    "T": "20260519",
+    "T1": "20260520",
+    "code": "603938",
+    "name": "三孚股份",
+    "boards": 2,
+    "pred_base": 0.2796378887070376,
+    "pred_v1": 0.2796378887070376,
+    "actual": 0,
+    "factors": {
+      "early_seal": true,
+      "zero_zhaban": false,
+      "heavy_seal": false
+    },
+    "pred_calibrated": 0.2756914088372093,
+    "pred_final": 0.2343376975116279
+  },
+  {
+    "T": "20260519",
+    "T1": "20260520",
+    "code": "605218",
+    "name": "伟时电子",
+    "boards": 2,
+    "pred_base": 0.2796378887070376,
+    "pred_v1": 0.2796378887070376,
+    "actual": 0,
+    "factors": {
+      "early_seal": true,
+      "zero_zhaban": true,
+      "heavy_seal": false
+    },
+    "pred_calibrated": 0.23750814871325582,
+    "pred_final": 0.20188192640626743
+  },
+  {
+    "T": "20260519",
+    "T1": "20260520",
+    "code": "603311",
+    "name": "金海高科",
+    "boards": 3,
+    "pred_base": 0.4104979314420804,
+    "pred_v1": 0.4104979314420804,
+    "actual": 0,
+    "factors": {
+      "early_seal": true,
+      "zero_zhaban": false,
+      "heavy_seal": false
+    },
+    "pred_calibrated": 0.42104285581395345,
+    "pred_final": 0.42104285581395345
+  },
+  {
+    "T": "20260519",
+    "T1": "20260520",
+    "code": "603316",
+    "name": "诚邦股份",
+    "boards": 2,
+    "pred_base": 0.2796378887070376,
+    "pred_v1": 0.2796378887070376,
+    "actual": 0,
+    "factors": {
+      "early_seal": true,
+      "zero_zhaban": false,
+      "heavy_seal": false
+    },
+    "pred_calibrated": 0.2756914088372093,
+    "pred_final": 0.2343376975116279
+  },
+  {
+    "T": "20260519",
+    "T1": "20260520",
+    "code": "600850",
+    "name": "电科数字",
+    "boards": 2,
+    "pred_base": 0.2796378887070376,
+    "pred_v1": 0.2796378887070376,
+    "actual": 0,
+    "factors": {
+      "early_seal": true,
+      "zero_zhaban": false,
+      "heavy_seal": false
+    },
+    "pred_calibrated": 0.2756914088372093,
+    "pred_final": 0.2343376975116279
+  },
+  {
+    "T": "20260519",
+    "T1": "20260520",
+    "code": "600758",
+    "name": "辽宁能源",
+    "boards": 2,
+    "pred_base": 0.2796378887070376,
+    "pred_v1": 0.2796378887070376,
+    "actual": 0,
+    "factors": {
+      "early_seal": true,
+      "zero_zhaban": false,
+      "heavy_seal": false
+    },
+    "pred_calibrated": 0.2756914088372093,
+    "pred_final": 0.2343376975116279
+  },
+  {
+    "T": "20260519",
+    "T1": "20260520",
+    "code": "603115",
+    "name": "海星股份",
+    "boards": 2,
+    "pred_base": 0.2796378887070376,
+    "pred_v1": 0.2796378887070376,
+    "actual": 0,
+    "factors": {
+      "early_seal": false,
+      "zero_zhaban": true,
+      "heavy_seal": false
+    },
+    "pred_calibrated": 0.2205480069767442,
+    "pred_final": 0.18746580593023257
+  },
+  {
+    "T": "20260519",
+    "T1": "20260520",
+    "code": "603989",
+    "name": "艾华集团",
+    "boards": 2,
+    "pred_base": 0.2796378887070376,
+    "pred_v1": 0.2796378887070376,
+    "actual": 0,
+    "factors": {
+      "early_seal": false,
+      "zero_zhaban": false,
+      "heavy_seal": false
+    },
+    "pred_calibrated": 0.2560046511627907,
+    "pred_final": 0.21760395348837208
+  }
+]
