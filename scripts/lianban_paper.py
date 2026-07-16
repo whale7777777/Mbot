@@ -329,6 +329,27 @@ def load_daily_data(date: str) -> dict | None:
     return json.loads(p.read_text(encoding="utf-8"))
 
 
+def trading_days_asc() -> list[str]:
+    """已落盘交易日，时间正序（旧→新）。"""
+    return sorted(d for d in list_daily_dates() if d.isdigit())
+
+
+def prev_trading_day(trade_date: str) -> str | None:
+    dates = trading_days_asc()
+    if trade_date not in dates:
+        return None
+    idx = dates.index(trade_date)
+    return dates[idx - 1] if idx > 0 else None
+
+
+def can_sell_under_t_plus_one(buy_date: str, trade_date: str) -> bool:
+    """A 股 T+1：买入当日不可卖出，须至少隔一个交易日。"""
+    dates = trading_days_asc()
+    if buy_date not in dates or trade_date not in dates:
+        return trade_date > buy_date
+    return dates.index(trade_date) > dates.index(buy_date)
+
+
 def stocks_to_df(stocks: list[dict]) -> Any:
     import pandas as pd
 
@@ -540,13 +561,21 @@ def process_sells(
     if not pf.positions:
         return
 
-    prev_data = load_daily_data(prev_date)
     today_stocks = today_data.get("stocks", [])
     today_df = stocks_to_df(today_stocks)
     sells = []
+    t1_locked = []
 
     for pos in list(pf.positions):
-        if pos.buy_date >= trade_date:
+        if not can_sell_under_t_plus_one(pos.buy_date, trade_date):
+            t1_locked.append(
+                {
+                    "code": pos.code,
+                    "name": pos.name,
+                    "buy_date": pos.buy_date,
+                    "note": "T+1 锁定，当日买入不可卖",
+                }
+            )
             continue
 
         code = pos.code
@@ -554,7 +583,7 @@ def process_sells(
 
         if in_pool:
             cur_boards = int(today_df.set_index("code").loc[code, "boards"])
-            if cur_boards == pos.boards_at_buy + 1:
+            if cur_boards >= pos.boards_at_buy + 1:
                 pos.boards_at_buy = cur_boards
                 journal["hold"].append(
                     {
@@ -562,16 +591,6 @@ def process_sells(
                         "name": pos.name,
                         "boards": cur_boards,
                         "note": "成功晋级，继续持有",
-                    }
-                )
-                continue
-            if cur_boards >= pos.boards_at_buy:
-                journal["hold"].append(
-                    {
-                        "code": pos.code,
-                        "name": pos.name,
-                        "boards": cur_boards,
-                        "note": f"维持{cur_boards}板，继续持有",
                     }
                 )
                 continue
@@ -606,6 +625,8 @@ def process_sells(
         sells.append(record)
 
     journal["sells"] = sells
+    if t1_locked:
+        journal["t1_locked"] = t1_locked
 
 
 def process_buys(
@@ -759,6 +780,14 @@ def process_buys(
         }
         append_trade(trades, record)
         buys.append(record)
+        journal.setdefault("t1_locked", []).append(
+            {
+                "code": cand["code"],
+                "name": s["名称"],
+                "buy_date": trade_date,
+                "note": "T+1 锁定，下一交易日起可卖",
+            }
+        )
 
     journal["buys"] = buys
     journal["buy_failed"] = buy_failed
@@ -778,7 +807,7 @@ def write_daily_journal(trade_date: str, journal: dict, pf: Portfolio, prices: d
         f"# 模拟盘日报（{trade_date}）",
         "",
         f"- 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        f"- 机器人：连板策略模拟盘（晋级概率 + 封板质量 + 主线簇 + **排板成交模拟**）",
+        f"- 机器人：连板策略模拟盘（晋级概率 + 封板质量 + 主线簇 + **排板成交模拟** + **T+1**）",
         "",
         "## 盘面观察",
         "",
@@ -812,6 +841,15 @@ def write_daily_journal(trade_date: str, journal: dict, pf: Portfolio, prices: d
         lines.append("")
     else:
         lines.append("- 无卖出")
+        lines.append("")
+
+    if journal.get("t1_locked"):
+        lines.append("### T+1 锁定（当日买入不可卖）")
+        lines.append("")
+        for h in journal["t1_locked"]:
+            lines.append(
+                f"- {h['name']}（{h['code']}）买入日 {h['buy_date']}：{h['note']}"
+            )
         lines.append("")
 
     if journal.get("hold"):
@@ -949,11 +987,7 @@ def run_single_day(
         return {"skipped": True, "reason": f"已处理过 {trade_date}"}
 
     if prev_date is None:
-        dates = sorted(list_daily_dates())
-        if trade_date in dates:
-            idx = dates.index(trade_date)
-            if idx + 1 < len(dates):
-                prev_date = dates[idx + 1]
+        prev_date = prev_trading_day(trade_date)
 
     journal: dict[str, Any] = {
         "date": trade_date,
@@ -963,6 +997,7 @@ def run_single_day(
         "buys": [],
         "buy_failed": [],
         "hold": [],
+        "t1_locked": [],
     }
 
     if prev_date:
