@@ -60,6 +60,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "hard_block_turnover_pct": 0.3,
     "min_fill_prob_to_buy": 0.22,
     "max_order_vs_amount_ratio": 0.03,
+    "sh_min_amount_yi": 9000,
+    "sh_warn_amount_yi": 10000,
+    "below_sh_min_no_buy": True,
+    "asphyxia_max_exposure_pct": 0.1,
+    "asphyxia_single_position_pct": 0.1,
     "commission_rate": 0.0003,
     "stamp_tax_sell": 0.001,
     "min_commission": 5.0,
@@ -147,6 +152,92 @@ def deterministic_roll(trade_date: str, code: str) -> float:
     raw = f"{trade_date}:{code}".encode()
     digest = hashlib.md5(raw).hexdigest()
     return int(digest[:8], 16) / 0xFFFFFFFF
+
+
+def trade_date_to_iso(trade_date: str) -> str:
+    return f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:8]}"
+
+
+def fetch_sh_amount_yi(trade_date: str) -> float | None:
+    """上证指数当日成交额（亿元）。"""
+    try:
+        import time
+
+        import akshare as ak
+    except ImportError:
+        return None
+
+    iso = trade_date_to_iso(trade_date)
+    for attempt in range(3):
+        try:
+            df = ak.stock_zh_index_daily_em(symbol="sh000001")
+            if df is None or df.empty:
+                continue
+            df = df.copy()
+            df["date"] = df["date"].astype(str).str[:10]
+            row = df[df["date"] == iso]
+            if row.empty:
+                return None
+            amount = float(row.iloc[-1]["amount"])
+            return round(amount / 1e8, 0)
+        except Exception:
+            if attempt < 2:
+                time.sleep(1.5)
+            continue
+    return None
+
+
+def assess_market_volume(trade_date: str, cfg: dict[str, Any]) -> dict[str, Any]:
+    """全市场量能评估（以上证成交额为锚）。"""
+    sh_yi = fetch_sh_amount_yi(trade_date)
+    min_yi = float(cfg.get("sh_min_amount_yi", 9000))
+    warn_yi = float(cfg.get("sh_warn_amount_yi", 10000))
+    below_no_buy = bool(cfg.get("below_sh_min_no_buy", True))
+
+    if sh_yi is None:
+        return {
+            "sh_amount_yi": None,
+            "volume_state": "未知",
+            "is_asphyxia": False,
+            "block_new_buy": False,
+            "max_exposure_pct": None,
+            "single_position_pct": None,
+            "note": "未获取到上证成交额，不触发量能风控",
+        }
+
+    if sh_yi < min_yi:
+        return {
+            "sh_amount_yi": sh_yi,
+            "volume_state": "窒息/冰点",
+            "is_asphyxia": True,
+            "block_new_buy": below_no_buy,
+            "max_exposure_pct": float(cfg.get("asphyxia_max_exposure_pct", 0.1)),
+            "single_position_pct": float(cfg.get("asphyxia_single_position_pct", 0.1)),
+            "note": f"上证成交额{sh_yi:.0f}亿<{min_yi:.0f}亿，量能窒息" + (
+                "，禁止新开仓" if below_no_buy else "，仅轻仓"
+            ),
+        }
+
+    if sh_yi < warn_yi:
+        return {
+            "sh_amount_yi": sh_yi,
+            "volume_state": "缩量观望",
+            "is_asphyxia": False,
+            "block_new_buy": False,
+            "max_exposure_pct": float(cfg.get("cold_pool_max_pct", 0.5)),
+            "single_position_pct": float(cfg.get("single_position_pct", 0.4)) * 0.75,
+            "note": f"上证成交额{sh_yi:.0f}亿<{warn_yi:.0f}亿，缩量观望",
+        }
+
+    return {
+        "sh_amount_yi": sh_yi,
+        "volume_state": "正常",
+        "is_asphyxia": False,
+        "block_new_buy": False,
+        "max_exposure_pct": None,
+        "single_position_pct": None,
+        "note": f"上证成交额{sh_yi:.0f}亿",
+    }
 
 
 def simulate_limit_up_fill(
@@ -619,14 +710,26 @@ def process_buys(
     stocks = today_data.get("stocks", [])
     pool_size = len(stocks)
     emotion = market_emotion_label(pool_size, cfg)
+    volume = assess_market_volume(trade_date, cfg)
+
+    pool_exposure = max_total_exposure_pct(pool_size, cfg)
+    max_exposure = pool_exposure
+    if volume.get("max_exposure_pct") is not None:
+        max_exposure = min(max_exposure, volume["max_exposure_pct"])
+
     journal["market"] = {
         "pool_size": pool_size,
         "emotion": emotion,
-        "max_exposure_pct": max_total_exposure_pct(pool_size, cfg),
+        "max_exposure_pct": max_exposure,
+        "sh_amount_yi": volume.get("sh_amount_yi"),
+        "volume_state": volume.get("volume_state"),
+        "is_asphyxia": volume.get("is_asphyxia"),
+        "volume_note": volume.get("note"),
     }
 
     total_mv = portfolio_market_value(pf, {})
-    per_position_cap = total_mv * cfg["single_position_pct"]
+    single_pct = volume.get("single_position_pct") or cfg["single_position_pct"]
+    per_position_cap = total_mv * single_pct
 
     ranked = rank_candidates(
         stocks,
@@ -659,7 +762,13 @@ def process_buys(
         journal["buy_skip"] = "持仓已满或现金不足"
         return
 
-    max_invest = total_mv * max_total_exposure_pct(pool_size, cfg)
+    if volume.get("block_new_buy"):
+        journal["buys"] = []
+        journal["buy_failed"] = []
+        journal["buy_skip"] = volume.get("note", "量能窒息，禁止新开仓")
+        return
+
+    max_invest = total_mv * max_exposure
     current_invested = sum(p.shares * p.cost_price for p in pf.positions)
     budget = min(pf.cash, max(0, max_invest - current_invested))
 
@@ -784,7 +893,13 @@ def write_daily_journal(trade_date: str, journal: dict, pf: Portfolio, prices: d
         "",
         f"- 连板池（≥2）：**{journal['market']['pool_size']}** 只",
         f"- 情绪判断：**{journal['market']['emotion']}**",
+        f"- 上证成交额：**{journal['market'].get('sh_amount_yi', '—')}** 亿元",
+        f"- 量能状态：**{journal['market'].get('volume_state', '—')}**",
         f"- 最大仓位上限：{journal['market']['max_exposure_pct']*100:.0f}%",
+    ]
+    if journal["market"].get("volume_note"):
+        lines.append(f"- 量能说明：{journal['market']['volume_note']}")
+    lines += [
         "",
         "## 候选评分（Top）",
         "",
