@@ -1,29 +1,8 @@
 {
   "initial_cash": 20000.0,
-  "cash": 4997.541400000002,
-  "positions": [
-    {
-      "code": "600664",
-      "name": "哈药股份",
-      "shares": 1700,
-      "cost_price": 4.49,
-      "buy_date": "20260715",
-      "boards_at_buy": 5,
-      "buy_reason": "晋级概率30.4%; 强封; 零炸板; 封单89%; 主线簇(医药/创新药×3)",
-      "theme": "医药/创新药"
-    },
-    {
-      "code": "002365",
-      "name": "永安药业",
-      "shares": 500,
-      "cost_price": 13.18,
-      "buy_date": "20260716",
-      "boards_at_buy": 2,
-      "buy_reason": "晋级概率31.5%; 强封; 零炸板; 封单34%; 主线簇(医药/创新药×3)",
-      "theme": "医药/创新药"
-    }
-  ],
+  "cash": 20126.386,
+  "positions": [],
   "last_trade_date": "20260716",
-  "created_at": "2026-07-16 05:50:58",
-  "updated_at": "2026-07-16 05:51:10"
+  "created_at": "2026-07-16 05:56:03",
+  "updated_at": "2026-07-16 05:56:07"
 }

@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -56,11 +57,22 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "max_boards_buy": 4,
     "max_zhaban_buy": 2,
     "min_turnover_pct": 0.5,
+    "hard_block_turnover_pct": 0.3,
+    "min_fill_prob_to_buy": 0.22,
+    "max_order_vs_amount_ratio": 0.03,
     "commission_rate": 0.0003,
     "stamp_tax_sell": 0.001,
     "min_commission": 5.0,
     "bot_name": "连板模拟盘机器人",
 }
+
+
+@dataclass
+class FillResult:
+    can_buy: bool
+    fill_prob: float
+    fill_ratio: float
+    note: str
 
 
 @dataclass
@@ -115,6 +127,133 @@ def parse_pct(s: str | float | int | None) -> float:
         return float(s)
     m = re.search(r"([\d.]+)", str(s))
     return float(m.group(1)) if m else 0.0
+
+
+def parse_seal_time_seconds(t: str | None) -> int | None:
+    """首次封板时间 HHMMSS → 当日秒数。"""
+    if not t:
+        return None
+    digits = re.sub(r"\D", "", str(t))
+    if len(digits) < 4:
+        return None
+    h = int(digits[0:2])
+    m = int(digits[2:4])
+    s = int(digits[4:6]) if len(digits) >= 6 else 0
+    return h * 3600 + m * 60 + s
+
+
+def deterministic_roll(trade_date: str, code: str) -> float:
+    """可复现的排板摇点，用于模拟排队是否轮到。"""
+    raw = f"{trade_date}:{code}".encode()
+    digest = hashlib.md5(raw).hexdigest()
+    return int(digest[:8], 16) / 0xFFFFFFFF
+
+
+def simulate_limit_up_fill(
+    stock: dict,
+    trade_date: str,
+    target_amount: float,
+    cfg: dict[str, Any],
+) -> FillResult:
+    """
+    模拟涨停封板时能否买进（排板成交）。
+
+    因子：换手率、封单占比、炸板回封次数、早盘秒板、委托占成交额。
+    最后以可复现摇点判定是否轮到成交。
+    """
+    turnover = parse_pct(stock.get("换手率"))
+    seal_pct = parse_pct(stock.get("封单占比"))
+    zhaban = int(stock.get("炸板次数", 0))
+    day_amount = float(stock.get("成交额") or 0)
+    first_seal = str(stock.get("首次封板时间", ""))
+    hard_block = float(cfg.get("hard_block_turnover_pct", 0.3))
+    min_prob = float(cfg.get("min_fill_prob_to_buy", 0.22))
+    max_order_ratio = float(cfg.get("max_order_vs_amount_ratio", 0.03))
+    notes: list[str] = []
+
+    if turnover < hard_block:
+        return FillResult(
+            False,
+            0.0,
+            0.0,
+            f"一字板换手{turnover:.2f}%<{hard_block}%，封死难成交",
+        )
+
+    # 日内实际换手越高，排板机会越多
+    liquidity = min(0.88, 0.04 + turnover * 0.065)
+
+    if seal_pct >= 500:
+        seal_factor = 0.02
+        notes.append(f"封单极强{seal_pct:.0f}%")
+    elif seal_pct >= 100:
+        seal_factor = 0.08
+        notes.append(f"封单过厚{seal_pct:.0f}%")
+    elif seal_pct >= 50:
+        seal_factor = 0.22
+        notes.append(f"封单偏厚{seal_pct:.0f}%")
+    elif seal_pct >= 30:
+        seal_factor = 0.48
+    elif seal_pct >= 15:
+        seal_factor = 0.68
+    else:
+        seal_factor = 0.92
+
+    reopen_bonus = min(0.38, zhaban * 0.14)
+    if zhaban > 0:
+        notes.append(f"炸板回封{zhaban}次")
+
+    early_penalty = 0.0
+    seal_sec = parse_seal_time_seconds(first_seal)
+    market_open = 9 * 3600 + 30 * 60
+    if (
+        seal_sec is not None
+        and seal_sec <= market_open + 5 * 60
+        and turnover < 2.0
+        and zhaban == 0
+    ):
+        early_penalty = 0.28
+        notes.append("早盘秒板未开板")
+
+    fill_prob = min(0.98, max(0.0, liquidity * seal_factor + reopen_bonus - early_penalty))
+
+    if day_amount > 0 and target_amount > 0:
+        order_ratio = target_amount / day_amount
+        if order_ratio > max_order_ratio:
+            shrink = max(0.08, max_order_ratio / order_ratio)
+            fill_prob *= shrink
+            notes.append(f"委托占成交额{order_ratio * 100:.1f}%")
+
+    code = str(stock["代码"]).zfill(6)
+    roll = deterministic_roll(trade_date, code)
+
+    if fill_prob < min_prob:
+        detail = "；".join(notes) if notes else "流动性不足"
+        return FillResult(
+            False,
+            fill_prob,
+            0.0,
+            f"成交概率{fill_prob * 100:.0f}%过低（{detail}）",
+        )
+
+    if roll > fill_prob:
+        detail = "；".join(notes) if notes else "排板未轮到"
+        return FillResult(
+            False,
+            fill_prob,
+            0.0,
+            f"排板未成交（概率{fill_prob * 100:.0f}%/摇点{roll * 100:.0f}%）| {detail}",
+        )
+
+    fill_ratio = 1.0 if fill_prob >= 0.82 else max(0.35, fill_prob)
+    detail = "；".join(notes) if notes else "流动性尚可"
+    if fill_ratio < 1.0:
+        detail += f"；部分成交{fill_ratio * 100:.0f}%"
+    return FillResult(
+        True,
+        fill_prob,
+        fill_ratio,
+        f"排板成交（概率{fill_prob * 100:.0f}%/摇点{roll * 100:.0f}%）| {detail}",
+    )
 
 
 def load_portfolio(cfg: dict[str, Any]) -> Portfolio:
@@ -277,10 +416,6 @@ def score_stock(stock: dict, sizes: dict[str, int], cfg: dict[str, Any]) -> tupl
         score -= 50
         reasons.append("烂板排除")
 
-    if turnover < cfg["min_turnover_pct"]:
-        score -= 40
-        reasons.append(f"换手{turnover:.2f}%一字难买")
-
     if prob < cfg["min_promote_prob_pct"]:
         score -= 30
         reasons.append("晋级率不足")
@@ -292,7 +427,13 @@ def score_stock(stock: dict, sizes: dict[str, int], cfg: dict[str, Any]) -> tupl
     return score, reasons
 
 
-def rank_candidates(stocks: list[dict], held: set[str], cfg: dict[str, Any]) -> list[dict]:
+def rank_candidates(
+    stocks: list[dict],
+    held: set[str],
+    cfg: dict[str, Any],
+    trade_date: str = "",
+    sample_budget: float = 8000.0,
+) -> list[dict]:
     sizes = cluster_sizes(stocks)
     ranked = []
     for s in stocks:
@@ -300,6 +441,7 @@ def rank_candidates(stocks: list[dict], held: set[str], cfg: dict[str, Any]) -> 
         if code in held:
             continue
         sc, reasons = score_stock(s, sizes, cfg)
+        fill = simulate_limit_up_fill(s, trade_date, sample_budget, cfg) if trade_date else None
         ranked.append(
             {
                 "stock": s,
@@ -307,6 +449,9 @@ def rank_candidates(stocks: list[dict], held: set[str], cfg: dict[str, Any]) -> 
                 "score": sc,
                 "reasons": reasons,
                 "theme": s.get("题材簇") or "其他",
+                "fill_prob": round(fill.fill_prob * 100, 1) if fill else None,
+                "can_buy": fill.can_buy if fill else None,
+                "fill_note": fill.note if fill else "",
             }
         )
     ranked.sort(key=lambda x: x["score"], reverse=True)
@@ -480,7 +625,16 @@ def process_buys(
         "max_exposure_pct": max_total_exposure_pct(pool_size, cfg),
     }
 
-    ranked = rank_candidates(stocks, pf.position_codes, cfg)
+    total_mv = portfolio_market_value(pf, {})
+    per_position_cap = total_mv * cfg["single_position_pct"]
+
+    ranked = rank_candidates(
+        stocks,
+        pf.position_codes,
+        cfg,
+        trade_date=trade_date,
+        sample_budget=per_position_cap,
+    )
     journal["candidates"] = [
         {
             "code": r["code"],
@@ -490,6 +644,9 @@ def process_buys(
             "prob_pct": r["stock"].get("晋级概率_pct"),
             "theme": r["theme"],
             "reasons": r["reasons"],
+            "fill_prob": r.get("fill_prob"),
+            "can_buy": r.get("can_buy"),
+            "fill_note": r.get("fill_note", ""),
         }
         for r in ranked[:8]
     ]
@@ -498,16 +655,16 @@ def process_buys(
     slots = max_positions - len(pf.positions)
     if slots <= 0 or pf.cash < 1000:
         journal["buys"] = []
+        journal["buy_failed"] = []
         journal["buy_skip"] = "持仓已满或现金不足"
         return
 
-    total_mv = portfolio_market_value(pf, {})
     max_invest = total_mv * max_total_exposure_pct(pool_size, cfg)
     current_invested = sum(p.shares * p.cost_price for p in pf.positions)
     budget = min(pf.cash, max(0, max_invest - current_invested))
-    per_position_cap = total_mv * cfg["single_position_pct"]
 
     buys = []
+    buy_failed = []
     for cand in ranked:
         if slots <= 0 or budget < 1000:
             break
@@ -520,8 +677,39 @@ def process_buys(
             continue
 
         alloc = min(budget, per_position_cap, pf.cash)
-        shares = int(alloc / price / 100) * 100
+        intended_shares = int(alloc / price / 100) * 100
+        if intended_shares < 100:
+            continue
+
+        intended_amount = intended_shares * price
+        fill = simulate_limit_up_fill(s, trade_date, intended_amount, cfg)
+        if not fill.can_buy:
+            buy_failed.append(
+                {
+                    "code": cand["code"],
+                    "name": s["名称"],
+                    "boards": int(s["连板数"]),
+                    "score": round(cand["score"], 1),
+                    "intended_shares": intended_shares,
+                    "fill_prob": round(fill.fill_prob * 100, 1),
+                    "reason": fill.note,
+                }
+            )
+            continue
+
+        shares = int(intended_shares * fill.fill_ratio / 100) * 100
         if shares < 100:
+            buy_failed.append(
+                {
+                    "code": cand["code"],
+                    "name": s["名称"],
+                    "boards": int(s["连板数"]),
+                    "score": round(cand["score"], 1),
+                    "intended_shares": intended_shares,
+                    "fill_prob": round(fill.fill_prob * 100, 1),
+                    "reason": f"部分成交后不足1手 | {fill.note}",
+                }
+            )
             continue
 
         amount = shares * price
@@ -546,7 +734,7 @@ def process_buys(
             cost_price=price,
             buy_date=trade_date,
             boards_at_buy=int(s["连板数"]),
-            buy_reason="; ".join(cand["reasons"]),
+            buy_reason="; ".join(cand["reasons"]) + f" | {fill.note}",
             theme=cand["theme"],
         )
         pf.positions.append(pos)
@@ -563,7 +751,9 @@ def process_buys(
             "boards": int(s["连板数"]),
             "prob_pct": s.get("晋级概率_pct"),
             "score": round(cand["score"], 1),
-            "reason": "; ".join(cand["reasons"]),
+            "fill_prob": round(fill.fill_prob * 100, 1),
+            "fill_ratio": round(fill.fill_ratio * 100, 1),
+            "reason": "; ".join(cand["reasons"]) + f" | {fill.note}",
             "theme": cand["theme"],
             "emotion": emotion,
         }
@@ -571,8 +761,12 @@ def process_buys(
         buys.append(record)
 
     journal["buys"] = buys
+    journal["buy_failed"] = buy_failed
     if not buys and not journal.get("buy_skip"):
-        journal["buy_skip"] = f"无评分≥{cfg['min_buy_score']}的可买标的"
+        if buy_failed:
+            journal["buy_skip"] = f"有{len(buy_failed)}只意向标的但封板未成交"
+        else:
+            journal["buy_skip"] = f"无评分≥{cfg['min_buy_score']}的可买标的"
 
 
 def write_daily_journal(trade_date: str, journal: dict, pf: Portfolio, prices: dict[str, float]) -> None:
@@ -584,7 +778,7 @@ def write_daily_journal(trade_date: str, journal: dict, pf: Portfolio, prices: d
         f"# 模拟盘日报（{trade_date}）",
         "",
         f"- 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        f"- 机器人：连板策略模拟盘（晋级概率 + 封板质量 + 主线簇）",
+        f"- 机器人：连板策略模拟盘（晋级概率 + 封板质量 + 主线簇 + **排板成交模拟**）",
         "",
         "## 盘面观察",
         "",
@@ -594,14 +788,15 @@ def write_daily_journal(trade_date: str, journal: dict, pf: Portfolio, prices: d
         "",
         "## 候选评分（Top）",
         "",
-        "| 代码 | 名称 | 板数 | 评分 | 晋级率 | 题材 | 因子 |",
-        "|------|------|------|------|--------|------|------|",
+        "| 代码 | 名称 | 板数 | 评分 | 晋级率 | 成交概率 | 可买 | 题材 |",
+        "|------|------|------|------|--------|----------|------|------|",
     ]
 
     for c in journal.get("candidates", [])[:6]:
+        can_buy = "是" if c.get("can_buy") else ("否" if c.get("can_buy") is False else "-")
         lines.append(
             f"| {c['code']} | {c['name']} | {c['boards']} | {c['score']} | "
-            f"{c.get('prob_pct', '-')} | {c.get('theme', '-')} | {'; '.join(c.get('reasons', [])[:3])} |"
+            f"{c.get('prob_pct', '-')} | {c.get('fill_prob', '-')} | {can_buy} | {c.get('theme', '-')} |"
         )
 
     lines += ["", "## 今日操作", ""]
@@ -626,13 +821,28 @@ def write_daily_journal(trade_date: str, journal: dict, pf: Portfolio, prices: d
             lines.append(f"- {h['name']}（{h['code']}）→ {h['boards']}板：{h['note']}")
         lines.append("")
 
+    if journal.get("buy_failed"):
+        lines.append("### 想买但未成交（封板排队）")
+        lines.append("")
+        for f in journal["buy_failed"]:
+            lines.append(
+                f"- **未成交** {f['name']}（{f['code']}）{f['boards']}板 "
+                f"意向{f['intended_shares']}股 成交概率{f['fill_prob']}% — {f['reason']}"
+            )
+        lines.append("")
+
     if journal.get("buys"):
         lines.append("### 买入")
         lines.append("")
         for b in journal["buys"]:
+            fill_info = ""
+            if b.get("fill_prob") is not None:
+                fill_info = f" 成交概率{b['fill_prob']}%"
+                if b.get("fill_ratio", 100) < 100:
+                    fill_info += f"（部分成交{b['fill_ratio']}%）"
             lines.append(
                 f"- **买入** {b['name']}（{b['code']}）{b['boards']}板 {b['shares']}股 @ {b['price']} "
-                f"评分{b['score']} | {b['reason']}"
+                f"评分{b['score']}{fill_info} | {b['reason']}"
             )
         lines.append("")
     elif journal.get("buy_skip"):
@@ -751,6 +961,7 @@ def run_single_day(
         "candidates": [],
         "sells": [],
         "buys": [],
+        "buy_failed": [],
         "hold": [],
     }
 
