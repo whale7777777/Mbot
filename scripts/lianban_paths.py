@@ -21,6 +21,14 @@ LEADER_MD = DOC_DIR / "近月高标龙头分析.md"
 STABILIZE_MD = DOC_DIR / "连板回踩企稳扫描.md"
 OVERVIEW_MD = DOC_DIR / "数据总览.md"
 
+# 模拟盘
+PAPER_DIR = DOC_DIR / "模拟盘"
+PAPER_CONFIG = PAPER_DIR / "paper_config.json"
+PAPER_STATE_JSON = PAPER_DIR / "持仓.json"
+PAPER_TRADES_JSON = PAPER_DIR / "成交记录.json"
+PAPER_LOG_MD = PAPER_DIR / "操作记录.md"
+PAPER_DAILY_DIR = PAPER_DIR / "每日"
+
 
 def daily_md(date: str) -> Path:
     return DAILY_DIR / f"{date}.md"
@@ -67,6 +75,17 @@ def ensure_daily_dir() -> Path:
     ensure_doc_dir()
     DAILY_DIR.mkdir(parents=True, exist_ok=True)
     return DAILY_DIR
+
+
+def ensure_paper_dir() -> Path:
+    ensure_doc_dir()
+    PAPER_DIR.mkdir(parents=True, exist_ok=True)
+    PAPER_DAILY_DIR.mkdir(parents=True, exist_ok=True)
+    return PAPER_DIR
+
+
+def paper_daily_md(date: str) -> Path:
+    return PAPER_DAILY_DIR / f"{date}.md"
 
 
 # 兼容旧引用

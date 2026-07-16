@@ -14,6 +14,8 @@
   python scripts/lianban.py batch --days 15   # 最近 N 个交易日逐日落盘
   python scripts/lianban.py backfill          # 补全涨停原因并重写 MD
   python scripts/lianban.py stabilize       # 连板回踩绿K企稳扫描
+  python scripts/lianban.py paper           # 模拟盘运行（默认最近交易日）
+  python scripts/lianban.py paper backfill --from 20260710 --to 20260716 --reset
 
 产出目录：docs/03-智能策略/连板数据/每日/
   - YYYYMMDD.md / YYYYMMDD.json   每个交易日各一份
@@ -210,7 +212,37 @@ def build_parser() -> argparse.ArgumentParser:
     sp_st.add_argument("--min-price", type=float, default=20.0, help="最新收盘价下限")
     sp_st.set_defaults(func=cmd_stabilize)
 
+    sp_paper = sub.add_parser("paper", help="模拟盘：自动买卖并记录操作")
+    sp_paper.add_argument(
+        "paper_cmd",
+        nargs="?",
+        default="run",
+        choices=["run", "backfill", "status", "reset"],
+        help="子命令（默认 run）",
+    )
+    sp_paper.add_argument("--date", help="交易日 YYYYMMDD")
+    sp_paper.add_argument("--prev-date", help="上一交易日")
+    sp_paper.add_argument("--from", dest="date_from", help="回测起始日")
+    sp_paper.add_argument("--to", dest="date_to", help="回测结束日")
+    sp_paper.add_argument("--reset", action="store_true", help="回测前重置")
+    sp_paper.set_defaults(func=cmd_paper)
+
     return p
+
+
+def cmd_paper(ns: argparse.Namespace) -> None:
+    argv = [ns.paper_cmd]
+    if ns.date:
+        argv += ["--date", ns.date]
+    if ns.prev_date:
+        argv += ["--prev-date", ns.prev_date]
+    if ns.date_from:
+        argv += ["--from", ns.date_from]
+    if ns.date_to:
+        argv += ["--to", ns.date_to]
+    if ns.reset:
+        argv.append("--reset")
+    _run("lianban_paper.py", *argv)
 
 
 def main(argv: list[str] | None = None) -> int:
