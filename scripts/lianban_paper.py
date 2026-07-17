@@ -69,6 +69,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "stamp_tax_sell": 0.001,
     "min_commission": 5.0,
     "bot_name": "连板模拟盘机器人",
+    "feishu_chat_id": "oc_b082d116980b38638fd17cf4807be8d0",
+    "feishu_notify_enabled": True,
+    "lark_cli_bin": "lark-cli",
 }
 
 
@@ -344,6 +347,17 @@ def simulate_limit_up_fill(
         fill_prob,
         fill_ratio,
         f"排板成交（概率{fill_prob * 100:.0f}%/摇点{roll * 100:.0f}%）| {detail}",
+    )
+
+
+def copy_portfolio(pf: Portfolio) -> Portfolio:
+    return Portfolio(
+        initial_cash=pf.initial_cash,
+        cash=pf.cash,
+        positions=[Position(**asdict(p)) for p in pf.positions],
+        last_trade_date=pf.last_trade_date,
+        created_at=pf.created_at,
+        updated_at=pf.updated_at,
     )
 
 
@@ -1095,6 +1109,226 @@ def run_single_day(
     return journal
 
 
+def resolve_pool_date(trade_date: str) -> str | None:
+    for d in list_daily_dates():
+        if d <= trade_date:
+            return d
+    return None
+
+
+def preview_expected_operations(
+    trade_date: str,
+    pf: Portfolio,
+    cfg: dict[str, Any],
+) -> dict[str, Any]:
+    """盘前预判：不修改真实持仓，基于最近可用连板池模拟今日买卖意向。"""
+    pool_date = resolve_pool_date(trade_date)
+    if not pool_date:
+        return {"error": "无连板池数据，请先运行 python scripts/lianban.py today"}
+
+    today_data = load_daily_data(pool_date)
+    if not today_data:
+        return {"error": f"缺少连板数据: {daily_json(pool_date)}"}
+
+    pf_copy = copy_portfolio(pf)
+    trades_copy: list[dict] = []
+    journal: dict[str, Any] = {
+        "trade_date": trade_date,
+        "pool_date": pool_date,
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "market": {},
+        "candidates": [],
+        "sell_watch": [],
+        "sells": [],
+        "buys": [],
+        "buy_failed": [],
+        "hold": [],
+        "buy_skip": "",
+    }
+
+    for pos in pf_copy.positions:
+        target = pos.boards_at_buy + 1
+        journal["sell_watch"].append(
+            {
+                "code": pos.code,
+                "name": pos.name,
+                "boards_at_buy": pos.boards_at_buy,
+                "target_boards": target,
+                "shares": pos.shares,
+                "note": f"若今日收盘未晋级至{target}板，将卖出",
+            }
+        )
+
+    dates = sorted(list_daily_dates())
+    prev_date = None
+    if pool_date in dates:
+        idx = dates.index(pool_date)
+        if idx + 1 < len(dates):
+            prev_date = dates[idx + 1]
+
+    if pool_date == trade_date and prev_date and pf_copy.positions:
+        prev_data = load_daily_data(prev_date)
+        if prev_data:
+            process_sells(
+                pf_copy,
+                trade_date,
+                prev_date,
+                prev_data,
+                today_data,
+                trades_copy,
+                cfg,
+                journal,
+            )
+            journal["sell_watch"] = []
+
+    process_buys(pf_copy, trade_date, today_data, trades_copy, cfg, journal)
+
+    prices = get_prices_from_pool(today_data, pf)
+    journal["portfolio"] = {
+        "cash": pf.cash,
+        "market_value": portfolio_market_value(pf, prices),
+        "return_pct": (portfolio_market_value(pf, prices) / pf.initial_cash - 1) * 100,
+        "positions": len(pf.positions),
+    }
+    return journal
+
+
+def format_feishu_expect(journal: dict[str, Any], cfg: dict[str, Any]) -> str:
+    if journal.get("error"):
+        return f"⚠️ 连板模拟盘盘前推送失败\n\n{journal['error']}"
+
+    trade_date = journal["trade_date"]
+    pool_date = journal["pool_date"]
+    bot_name = cfg.get("bot_name", "连板模拟盘机器人")
+    market = journal.get("market") or {}
+    pf = journal.get("portfolio") or {}
+
+    lines = [
+        f"**{bot_name} · 盘前预期操作（{trade_date}）**",
+        "",
+        f"生成时间：{journal['generated_at']}",
+        f"数据基准：{pool_date} 收盘连板池"
+        + ("（与今日同日）" if pool_date == trade_date else "（盘前预判，开盘后以实际涨停池为准）"),
+        "",
+        "**盘面**",
+        f"- 连板池：{market.get('pool_size', '—')} 只",
+        f"- 情绪：{market.get('emotion', '—')}",
+        f"- 仓位上限：{market.get('max_exposure_pct', 0) * 100:.0f}%",
+    ]
+    if market.get("volume_note"):
+        lines.append(f"- 量能：{market['volume_note']}")
+
+    lines += ["", "**持仓监控（卖出预期）**"]
+    if journal.get("sells"):
+        for s in journal["sells"]:
+            lines.append(
+                f"- 🔴 预期卖出 {s['name']}（{s['code']}）{s['shares']}股 — {s['reason']}"
+            )
+    elif journal.get("sell_watch"):
+        for w in journal["sell_watch"]:
+            lines.append(f"- 👀 {w['name']}（{w['code']}）{w['boards_at_buy']}板 — {w['note']}")
+    else:
+        lines.append("- 无持仓")
+
+    lines += ["", "**预期买入**"]
+    if journal.get("buys"):
+        for b in journal["buys"]:
+            fill = f" 成交概率{b['fill_prob']}%" if b.get("fill_prob") is not None else ""
+            lines.append(
+                f"- 🟢 拟买入 {b['name']}（{b['code']}）{b['boards']}板 "
+                f"{b['shares']}股 @ {b['price']} 评分{b['score']}{fill}"
+            )
+    elif journal.get("buy_failed"):
+        for f in journal["buy_failed"][:4]:
+            lines.append(
+                f"- 🟡 想买未成交 {f['name']}（{f['code']}）{f['boards']}板 "
+                f"评分{f['score']} 成交概率{f['fill_prob']}% — {f['reason']}"
+            )
+    elif journal.get("buy_skip"):
+        lines.append(f"- {journal['buy_skip']}")
+    else:
+        lines.append("- 暂无买入意向")
+
+    top = journal.get("candidates", [])[:3]
+    if top:
+        lines += ["", "**候选关注 Top3**"]
+        for c in top:
+            can_buy = "可买" if c.get("can_buy") else "难成交"
+            lines.append(
+                f"- {c['name']}（{c['code']}）{c['boards']}板 "
+                f"评分{c['score']} 晋级率{c.get('prob_pct', '-')} {can_buy}"
+            )
+
+    lines += [
+        "",
+        "**当前模拟盘**",
+        f"- 现金：{pf.get('cash', 0):,.2f} 元",
+        f"- 总资产：{pf.get('market_value', 0):,.2f} 元（{pf.get('return_pct', 0):+.2f}%）",
+        f"- 持仓：{pf.get('positions', 0)} 只",
+    ]
+    return "\n".join(lines)
+
+
+def send_feishu_message(text: str, cfg: dict[str, Any], *, dry_run: bool = False) -> dict[str, Any]:
+    chat_id = cfg.get("feishu_chat_id", "")
+    if not chat_id:
+        return {"ok": False, "error": "未配置 feishu_chat_id"}
+    if not cfg.get("feishu_notify_enabled", True):
+        return {"ok": False, "error": "feishu_notify_enabled=false"}
+
+    import os
+    import shutil
+    import subprocess
+
+    lark_cli = cfg.get("lark_cli_bin") or shutil.which("lark-cli") or "lark-cli"
+    cmd = [lark_cli, "im", "+messages-send", "--chat-id", chat_id, "--markdown", text]
+    if dry_run:
+        return {"ok": True, "dry_run": True, "cmd": cmd, "text": text}
+
+    env = os.environ.copy()
+    npm_global = os.path.expanduser("~/.npm-global/bin")
+    if npm_global not in env.get("PATH", ""):
+        env["PATH"] = f"{npm_global}:{env.get('PATH', '')}"
+
+    proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    if proc.returncode != 0:
+        return {"ok": False, "error": proc.stderr.strip() or proc.stdout.strip()}
+    try:
+        return {"ok": True, "response": json.loads(proc.stdout)}
+    except json.JSONDecodeError:
+        return {"ok": True, "response": proc.stdout.strip()}
+
+
+def cmd_expect(args: argparse.Namespace) -> None:
+    cfg = load_config()
+    pf = load_portfolio(cfg)
+    trade_date = args.date or datetime.now().strftime("%Y%m%d")
+    journal = preview_expected_operations(trade_date, pf, cfg)
+    if args.format == "json":
+        print(json.dumps(journal, ensure_ascii=False, indent=2))
+        return
+    print(format_feishu_expect(journal, cfg))
+
+
+def cmd_notify(args: argparse.Namespace) -> None:
+    cfg = load_config()
+    pf = load_portfolio(cfg)
+    trade_date = args.date or datetime.now().strftime("%Y%m%d")
+    journal = preview_expected_operations(trade_date, pf, cfg)
+    text = format_feishu_expect(journal, cfg)
+    if args.print_only:
+        print(text)
+        return
+    result = send_feishu_message(text, cfg, dry_run=args.dry_run)
+    if not result.get("ok"):
+        print(f"飞书推送失败: {result.get('error')}", file=sys.stderr)
+        raise SystemExit(1)
+    if result.get("dry_run"):
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
+    print(f"已推送盘前预期操作到飞书群 {cfg.get('feishu_chat_id')}")
+
+
 def cmd_run(args: argparse.Namespace) -> None:
     cfg = load_config()
     save_config_template()
@@ -1213,6 +1447,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("status", help="查看持仓").set_defaults(func=cmd_status)
     sub.add_parser("reset", help="重置模拟盘").set_defaults(func=cmd_reset)
+
+    sp_expect = sub.add_parser("expect", help="生成盘前预期操作（不修改持仓）")
+    sp_expect.add_argument("--date", help="交易日 YYYYMMDD")
+    sp_expect.add_argument("--format", choices=["text", "json"], default="text")
+    sp_expect.set_defaults(func=cmd_expect)
+
+    sp_notify = sub.add_parser("notify", help="推送盘前预期操作到飞书群")
+    sp_notify.add_argument("--date", help="交易日 YYYYMMDD")
+    sp_notify.add_argument("--print-only", action="store_true", help="仅打印，不发送")
+    sp_notify.add_argument("--dry-run", action="store_true", help="打印 lark-cli 命令，不发送")
+    sp_notify.set_defaults(func=cmd_notify)
     return p
 
 

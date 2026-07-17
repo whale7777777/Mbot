@@ -217,7 +217,7 @@ def build_parser() -> argparse.ArgumentParser:
         "paper_cmd",
         nargs="?",
         default="run",
-        choices=["run", "backfill", "status", "reset"],
+        choices=["run", "backfill", "status", "reset", "expect", "notify"],
         help="子命令（默认 run）",
     )
     sp_paper.add_argument("--date", help="交易日 YYYYMMDD")
@@ -225,6 +225,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp_paper.add_argument("--from", dest="date_from", help="回测起始日")
     sp_paper.add_argument("--to", dest="date_to", help="回测结束日")
     sp_paper.add_argument("--reset", action="store_true", help="回测前重置")
+    sp_paper.add_argument("--print-only", action="store_true", help="notify：仅打印")
+    sp_paper.add_argument("--dry-run", action="store_true", help="notify：不实际发送")
     sp_paper.set_defaults(func=cmd_paper)
 
     return p
@@ -242,6 +244,10 @@ def cmd_paper(ns: argparse.Namespace) -> None:
         argv += ["--to", ns.date_to]
     if ns.reset:
         argv.append("--reset")
+    if ns.print_only:
+        argv.append("--print-only")
+    if ns.dry_run:
+        argv.append("--dry-run")
     _run("lianban_paper.py", *argv)
 
 

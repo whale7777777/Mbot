@@ -21,5 +21,8 @@
   "commission_rate": 0.0003,
   "stamp_tax_sell": 0.001,
   "min_commission": 5.0,
-  "bot_name": "连板模拟盘机器人"
+  "bot_name": "连板模拟盘机器人",
+  "feishu_chat_id": "oc_b082d116980b38638fd17cf4807be8d0",
+  "feishu_notify_enabled": true,
+  "lark_cli_bin": "lark-cli"
 }

@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+连板模拟盘 · 交易日 9:25 盘前飞书推送入口（供 crontab / systemd 调用）。
+
+示例：
+  python scripts/lianban_paper_notify.py
+  python scripts/lianban_paper_notify.py --date 20260718
+  python scripts/lianban_paper_notify.py --force   # 忽略交易日检查
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import sys
+from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from lianban_paper import cmd_notify, load_config  # noqa: E402
+
+HOLIDAY_CSV = ROOT / "qbot" / "config" / "national_holidays.csv"
+TZ_SH = ZoneInfo("Asia/Shanghai")
+
+
+def now_shanghai() -> datetime:
+    return datetime.now(TZ_SH)
+
+
+def is_weekday(date_str: str) -> bool:
+    return datetime.strptime(date_str, "%Y%m%d").weekday() < 5
+
+
+def is_statutory_holiday(date_str: str) -> bool:
+    if not HOLIDAY_CSV.is_file():
+        return False
+    dt = datetime.strptime(date_str, "%Y%m%d")
+    year = dt.year
+    md = dt.strftime("%m-%d")
+    with HOLIDAY_CSV.open(encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            if str(row.get("year", "")) != str(year):
+                continue
+            start = row.get("startDate", "")
+            end = row.get("endDate", "")
+            if start and end and start <= md <= end:
+                return True
+    return False
+
+
+def is_trading_day(date_str: str) -> bool:
+    if not is_weekday(date_str):
+        return False
+    if is_statutory_holiday(date_str):
+        return False
+    return True
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="连板模拟盘盘前飞书推送")
+    parser.add_argument("--date", help="交易日 YYYYMMDD，默认今天")
+    parser.add_argument("--force", action="store_true", help="非交易日也推送（调试用）")
+    parser.add_argument("--print-only", action="store_true", help="仅打印，不发送")
+    parser.add_argument("--dry-run", action="store_true", help="仅打印 lark-cli 命令")
+    args = parser.parse_args(argv)
+
+    trade_date = args.date or now_shanghai().strftime("%Y%m%d")
+    if not args.force and not is_trading_day(trade_date):
+        print(f"跳过：{trade_date} 非 A 股交易日")
+        return 0
+
+    cfg = load_config()
+    if not cfg.get("feishu_notify_enabled", True):
+        print("跳过：feishu_notify_enabled=false")
+        return 0
+
+    ns = argparse.Namespace(
+        date=trade_date,
+        print_only=args.print_only,
+        dry_run=args.dry_run,
+    )
+    cmd_notify(ns)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
