@@ -1,8 +1,19 @@
 {
   "initial_cash": 20000.0,
-  "cash": 20126.386,
-  "positions": [],
-  "last_trade_date": "20260716",
+  "cash": 16701.386,
+  "positions": [
+    {
+      "code": "000676",
+      "name": "智度股份",
+      "shares": 500,
+      "cost_price": 6.84,
+      "buy_date": "20260717",
+      "boards_at_buy": 3,
+      "buy_reason": "晋级概率35.4%; 强封; 封单35% | 排板成交（概率46%/摇点45%）| 炸板回封1次；部分成交46%",
+      "theme": "行业:广告营销"
+    }
+  ],
+  "last_trade_date": "20260717",
   "created_at": "2026-07-16 05:56:03",
-  "updated_at": "2026-07-16 05:56:07"
+  "updated_at": "2026-07-17 01:46:10"
 }
