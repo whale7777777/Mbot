@@ -24,11 +24,14 @@ import argparse
 import hashlib
 import json
 import re
+import subprocess
 import sys
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -72,6 +75,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "feishu_chat_id": "oc_b082d116980b38638fd17cf4807be8d0",
     "feishu_notify_enabled": True,
     "lark_cli_bin": "lark-cli",
+    "auction_end_time": "09:25",
+    "auction_retry_seconds": 30,
+    "auction_max_retries": 6,
 }
 
 
@@ -1110,18 +1116,88 @@ def run_single_day(
 
 
 def resolve_pool_date(trade_date: str) -> str | None:
+    if daily_json(trade_date).is_file():
+        return trade_date
     for d in list_daily_dates():
         if d <= trade_date:
             return d
     return None
 
 
+def _parse_hhmm(value: str) -> tuple[int, int]:
+    hour, minute = value.strip().split(":", 1)
+    return int(hour), int(minute)
+
+
+def wait_until_auction_end(trade_date: str, cfg: dict[str, Any]) -> None:
+    """竞价结束（默认 09:25 北京时间）后再继续分析。"""
+    tz = ZoneInfo("Asia/Shanghai")
+    now = datetime.now(tz)
+    hour, minute = _parse_hhmm(str(cfg.get("auction_end_time", "09:25")))
+    target = datetime.strptime(trade_date, "%Y%m%d").replace(
+        hour=hour, minute=minute, second=0, microsecond=0, tzinfo=tz
+    )
+    if now < target:
+        wait_s = (target - now).total_seconds()
+        print(f"等待竞价结束 {cfg.get('auction_end_time', '09:25')}（约 {wait_s:.0f}s）...")
+        time.sleep(wait_s)
+
+
+def refresh_today_pool(trade_date: str, cfg: dict[str, Any]) -> tuple[bool, str]:
+    """竞价结束后拉取当日涨停池并落盘，供预期操作分析使用。"""
+    scripts_dir = Path(__file__).resolve().parent
+    root = scripts_dir.parent
+    python = sys.executable
+    retries = int(cfg.get("auction_max_retries", 6))
+    interval = int(cfg.get("auction_retry_seconds", 30))
+    last_err = ""
+
+    for attempt in range(1, retries + 1):
+        print(f"拉取当日连板池 {trade_date}（第 {attempt}/{retries} 次）...")
+        proc = subprocess.run(
+            [python, str(scripts_dir / "lianban_today.py"), "--date", trade_date],
+            cwd=root,
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode != 0:
+            last_err = proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}"
+            print(last_err, file=sys.stderr)
+        elif daily_json(trade_date).is_file():
+            data = load_daily_data(trade_date)
+            if data is not None:
+                pool_size = len(data.get("stocks", []))
+                print(f"连板池已更新：{trade_date}，样本 {pool_size} 只")
+                return True, f"{trade_date} 竞价后连板池（{pool_size} 只）"
+        else:
+            last_err = f"未生成 {daily_json(trade_date)}"
+
+        if attempt < retries:
+            print(f"数据未就绪，{interval}s 后重试...")
+            time.sleep(interval)
+
+    return False, last_err or "竞价后连板池拉取失败"
+
+
+def prepare_auction_analysis(
+    trade_date: str,
+    cfg: dict[str, Any],
+    *,
+    skip_wait: bool = False,
+) -> tuple[bool, str]:
+    if not skip_wait:
+        wait_until_auction_end(trade_date, cfg)
+    return refresh_today_pool(trade_date, cfg)
+
+
 def preview_expected_operations(
     trade_date: str,
     pf: Portfolio,
     cfg: dict[str, Any],
+    *,
+    pool_note: str = "",
 ) -> dict[str, Any]:
-    """盘前预判：不修改真实持仓，基于最近可用连板池模拟今日买卖意向。"""
+    """竞价结束后预判：不修改真实持仓，基于当日连板池模拟买卖意向。"""
     pool_date = resolve_pool_date(trade_date)
     if not pool_date:
         return {"error": "无连板池数据，请先运行 python scripts/lianban.py today"}
@@ -1135,7 +1211,9 @@ def preview_expected_operations(
     journal: dict[str, Any] = {
         "trade_date": trade_date,
         "pool_date": pool_date,
-        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "generated_at": datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d %H:%M:%S"),
+        "data_phase": "竞价结束后",
+        "pool_note": pool_note,
         "market": {},
         "candidates": [],
         "sell_watch": [],
@@ -1195,7 +1273,7 @@ def preview_expected_operations(
 
 def format_feishu_expect(journal: dict[str, Any], cfg: dict[str, Any]) -> str:
     if journal.get("error"):
-        return f"⚠️ 连板模拟盘盘前推送失败\n\n{journal['error']}"
+        return f"⚠️ 连板模拟盘竞价后推送失败\n\n{journal['error']}"
 
     trade_date = journal["trade_date"]
     pool_date = journal["pool_date"]
@@ -1204,11 +1282,10 @@ def format_feishu_expect(journal: dict[str, Any], cfg: dict[str, Any]) -> str:
     pf = journal.get("portfolio") or {}
 
     lines = [
-        f"**{bot_name} · 盘前预期操作（{trade_date}）**",
+        f"**{bot_name} · 竞价结束后预期操作（{trade_date}）**",
         "",
         f"生成时间：{journal['generated_at']}",
-        f"数据基准：{pool_date} 收盘连板池"
-        + ("（与今日同日）" if pool_date == trade_date else "（盘前预判，开盘后以实际涨停池为准）"),
+        f"数据基准：{journal.get('pool_note') or f'{pool_date} 连板池'}",
         "",
         "**盘面**",
         f"- 连板池：{market.get('pool_size', '—')} 只",
@@ -1302,8 +1379,21 @@ def send_feishu_message(text: str, cfg: dict[str, Any], *, dry_run: bool = False
 def cmd_expect(args: argparse.Namespace) -> None:
     cfg = load_config()
     pf = load_portfolio(cfg)
-    trade_date = args.date or datetime.now().strftime("%Y%m%d")
-    journal = preview_expected_operations(trade_date, pf, cfg)
+    trade_date = args.date or datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y%m%d")
+    pool_note = ""
+    if not getattr(args, "skip_refresh", False):
+        ok, note = prepare_auction_analysis(
+            trade_date, cfg, skip_wait=getattr(args, "skip_wait", False)
+        )
+        if not ok:
+            journal = {"error": note}
+            if args.format == "json":
+                print(json.dumps(journal, ensure_ascii=False, indent=2))
+                return
+            print(format_feishu_expect(journal, cfg))
+            raise SystemExit(1)
+        pool_note = note
+    journal = preview_expected_operations(trade_date, pf, cfg, pool_note=pool_note)
     if args.format == "json":
         print(json.dumps(journal, ensure_ascii=False, indent=2))
         return
@@ -1313,8 +1403,24 @@ def cmd_expect(args: argparse.Namespace) -> None:
 def cmd_notify(args: argparse.Namespace) -> None:
     cfg = load_config()
     pf = load_portfolio(cfg)
-    trade_date = args.date or datetime.now().strftime("%Y%m%d")
-    journal = preview_expected_operations(trade_date, pf, cfg)
+    trade_date = args.date or datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y%m%d")
+
+    ok, pool_note = prepare_auction_analysis(
+        trade_date,
+        cfg,
+        skip_wait=getattr(args, "skip_wait", False),
+    )
+    if not ok:
+        text = format_feishu_expect({"error": pool_note}, cfg)
+        if getattr(args, "print_only", False):
+            print(text)
+            raise SystemExit(1)
+        result = send_feishu_message(text, cfg, dry_run=getattr(args, "dry_run", False))
+        if not result.get("ok"):
+            print(f"飞书推送失败: {result.get('error')}", file=sys.stderr)
+        raise SystemExit(1)
+
+    journal = preview_expected_operations(trade_date, pf, cfg, pool_note=pool_note)
     text = format_feishu_expect(journal, cfg)
     if args.print_only:
         print(text)
@@ -1326,7 +1432,7 @@ def cmd_notify(args: argparse.Namespace) -> None:
     if result.get("dry_run"):
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return
-    print(f"已推送盘前预期操作到飞书群 {cfg.get('feishu_chat_id')}")
+    print(f"已推送竞价后预期操作到飞书群 {cfg.get('feishu_chat_id')}")
 
 
 def cmd_run(args: argparse.Namespace) -> None:
@@ -1448,13 +1554,16 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("status", help="查看持仓").set_defaults(func=cmd_status)
     sub.add_parser("reset", help="重置模拟盘").set_defaults(func=cmd_reset)
 
-    sp_expect = sub.add_parser("expect", help="生成盘前预期操作（不修改持仓）")
+    sp_expect = sub.add_parser("expect", help="竞价结束后生成预期操作（不修改持仓）")
     sp_expect.add_argument("--date", help="交易日 YYYYMMDD")
     sp_expect.add_argument("--format", choices=["text", "json"], default="text")
+    sp_expect.add_argument("--skip-wait", action="store_true", help="不等待竞价结束时刻")
+    sp_expect.add_argument("--skip-refresh", action="store_true", help="不拉取当日连板池，用本地缓存")
     sp_expect.set_defaults(func=cmd_expect)
 
-    sp_notify = sub.add_parser("notify", help="推送盘前预期操作到飞书群")
+    sp_notify = sub.add_parser("notify", help="竞价结束后分析并推送预期操作到飞书群")
     sp_notify.add_argument("--date", help="交易日 YYYYMMDD")
+    sp_notify.add_argument("--skip-wait", action="store_true", help="不等待竞价结束时刻")
     sp_notify.add_argument("--print-only", action="store_true", help="仅打印，不发送")
     sp_notify.add_argument("--dry-run", action="store_true", help="打印 lark-cli 命令，不发送")
     sp_notify.set_defaults(func=cmd_notify)

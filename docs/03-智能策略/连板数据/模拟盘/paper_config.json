@@ -24,5 +24,8 @@
   "bot_name": "连板模拟盘机器人",
   "feishu_chat_id": "oc_b082d116980b38638fd17cf4807be8d0",
   "feishu_notify_enabled": true,
-  "lark_cli_bin": "lark-cli"
+  "lark_cli_bin": "lark-cli",
+  "auction_end_time": "09:25",
+  "auction_retry_seconds": 30,
+  "auction_max_retries": 6
 }

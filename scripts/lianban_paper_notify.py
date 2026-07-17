@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-连板模拟盘 · 交易日 9:25 盘前飞书推送入口（供 crontab / systemd 调用）。
+连板模拟盘 · 交易日竞价结束后飞书推送入口（供 cron / Hermes 调用）。
+
+流程：
+  1. 等到 09:25（竞价结束，可 --skip-wait 跳过）
+  2. 拉取当日连板池（lianban_today）
+  3. 生成模拟盘预期操作
+  4. 分析完成后推送到飞书群
 
 示例：
   python scripts/lianban_paper_notify.py
   python scripts/lianban_paper_notify.py --date 20260718
-  python scripts/lianban_paper_notify.py --force   # 忽略交易日检查
+  python scripts/lianban_paper_notify.py --skip-wait --date 20260717   # 调试
 """
 
 from __future__ import annotations
@@ -61,9 +67,10 @@ def is_trading_day(date_str: str) -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="连板模拟盘盘前飞书推送")
-    parser.add_argument("--date", help="交易日 YYYYMMDD，默认今天")
-    parser.add_argument("--force", action="store_true", help="非交易日也推送（调试用）")
+    parser = argparse.ArgumentParser(description="连板模拟盘竞价结束后飞书推送")
+    parser.add_argument("--date", help="交易日 YYYYMMDD，默认今天（北京时间）")
+    parser.add_argument("--force", action="store_true", help="非交易日也执行（调试用）")
+    parser.add_argument("--skip-wait", action="store_true", help="不等待 09:25，立即分析")
     parser.add_argument("--print-only", action="store_true", help="仅打印，不发送")
     parser.add_argument("--dry-run", action="store_true", help="仅打印 lark-cli 命令")
     args = parser.parse_args(argv)
@@ -82,6 +89,7 @@ def main(argv: list[str] | None = None) -> int:
         date=trade_date,
         print_only=args.print_only,
         dry_run=args.dry_run,
+        skip_wait=args.skip_wait,
     )
     cmd_notify(ns)
     return 0

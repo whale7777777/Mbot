@@ -227,6 +227,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp_paper.add_argument("--reset", action="store_true", help="回测前重置")
     sp_paper.add_argument("--print-only", action="store_true", help="notify：仅打印")
     sp_paper.add_argument("--dry-run", action="store_true", help="notify：不实际发送")
+    sp_paper.add_argument("--skip-wait", action="store_true", help="notify/expect：不等待竞价结束")
     sp_paper.set_defaults(func=cmd_paper)
 
     return p
@@ -248,6 +249,8 @@ def cmd_paper(ns: argparse.Namespace) -> None:
         argv.append("--print-only")
     if ns.dry_run:
         argv.append("--dry-run")
+    if getattr(ns, "skip_wait", False):
+        argv.append("--skip-wait")
     _run("lianban_paper.py", *argv)
 
 
