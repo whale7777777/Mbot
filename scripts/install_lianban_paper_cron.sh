@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# 安装连板模拟盘盘前飞书推送定时任务（交易日 9:25 北京时间）
+# 安装连板模拟盘竞价后飞书推送（交易日 09:25 触发 → 竞价结束 → 分析 → 推送）
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PYTHON="${PYTHON:-/home/ubuntu/miniconda3/bin/python}"
 HERMES_SCRIPT="$HOME/.hermes/scripts/lianban_paper_notify.py"
 CHAT_ID="oc_b082d116980b38638fd17cf4807be8d0"
+JOB_NAME="连板模拟盘竞价后推送"
 
 mkdir -p "$(dirname "$HERMES_SCRIPT")"
 cat > "$HERMES_SCRIPT" <<EOF
@@ -27,16 +28,18 @@ chmod +x "$HERMES_SCRIPT"
 
 if command -v hermes >/dev/null 2>&1; then
   source "$HOME/.bashrc" 2>/dev/null || true
-  hermes cron list 2>/dev/null | grep -q "连板模拟盘盘前推送" && \
+  hermes cron list 2>/dev/null | grep -q "连板模拟盘" && \
     hermes cron remove "连板模拟盘盘前推送" 2>/dev/null || true
-  # 云主机 UTC：北京时间 09:25 = UTC 01:25
+  hermes cron list 2>/dev/null | grep -q "连板模拟盘" && \
+    hermes cron remove "$JOB_NAME" 2>/dev/null || true
+  # UTC 01:25 = 北京时间 09:25；任务内会等待竞价结束、拉数据、分析完再输出
   hermes cron add "25 1 * * 1-5" \
-    --name "连板模拟盘盘前推送" \
+    --name "$JOB_NAME" \
     --script lianban_paper_notify.py \
     --no-agent \
     --deliver "feishu:${CHAT_ID}" \
     --workdir "$ROOT"
-  echo "已创建 Hermes cron：工作日 09:25（北京时间）→ 飞书群"
+  echo "已创建 Hermes cron：工作日 09:25 触发 → 竞价后分析 → 飞书推送"
 fi
 
 if command -v crontab >/dev/null 2>&1; then
@@ -46,7 +49,7 @@ if command -v crontab >/dev/null 2>&1; then
     crontab -l 2>/dev/null | grep -vF "$MARKER" | grep -vF "lianban_paper_notify.py" | crontab - || true
   fi
   (crontab -l 2>/dev/null || true; echo "$MARKER"; echo "$CRON_LINE") | crontab -
-  echo "已安装系统 crontab（UTC 01:25 = 北京时间 09:25）"
+  echo "已安装系统 crontab（UTC 01:25 = 北京时间 09:25 触发）"
 else
   echo "提示：系统无 crontab，已依赖 Hermes cron（若已安装）"
 fi
