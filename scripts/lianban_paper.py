@@ -60,10 +60,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "stamp_tax_sell": 0.001,
     "min_commission": 5.0,
     "bot_name": "连板模拟盘机器人",
-    # 量能风控（上证成交额，亿元）
+    # 量能风控（上证成交额，亿元）；below_sh_min_no_buy=false 时不因量能禁止开仓
     "sh_min_amount_yi": 9000,
     "sh_warn_amount_yi": 10000,
-    "below_sh_min_no_buy": True,
+    "below_sh_min_no_buy": False,
     "asphyxia_max_exposure_pct": 0.1,
     "asphyxia_single_position_pct": 0.1,
     # 指数退潮 + 缩量 → 强制冰点情绪
@@ -272,7 +272,7 @@ def assess_market_volume(trade_date: str, cfg: dict[str, Any]) -> dict[str, Any]
     sh_yi = fetch_sh_amount_yi(trade_date)
     min_yi = float(cfg.get("sh_min_amount_yi", 9000))
     warn_yi = float(cfg.get("sh_warn_amount_yi", 10000))
-    below_no_buy = bool(cfg.get("below_sh_min_no_buy", True))
+    below_no_buy = bool(cfg.get("below_sh_min_no_buy", False))
 
     if sh_yi is None:
         return {
@@ -291,10 +291,14 @@ def assess_market_volume(trade_date: str, cfg: dict[str, Any]) -> dict[str, Any]
             "volume_state": "窒息/冰点",
             "is_asphyxia": True,
             "block_new_buy": below_no_buy,
-            "max_exposure_pct": float(cfg.get("asphyxia_max_exposure_pct", 0.1)),
-            "single_position_pct": float(cfg.get("asphyxia_single_position_pct", 0.1)),
-            "note": f"上证成交额{sh_yi:.0f}亿<{min_yi:.0f}亿，量能窒息"
-            + ("，禁止新开仓" if below_no_buy else "，仅轻仓"),
+            "max_exposure_pct": (
+                float(cfg.get("asphyxia_max_exposure_pct", 0.1)) if below_no_buy else None
+            ),
+            "single_position_pct": (
+                float(cfg.get("asphyxia_single_position_pct", 0.1)) if below_no_buy else None
+            ),
+            "note": f"上证成交额{sh_yi:.0f}亿<{min_yi:.0f}亿，量能偏低"
+            + ("，禁止新开仓" if below_no_buy else "（不限制开仓）"),
         }
 
     if sh_yi < warn_yi:

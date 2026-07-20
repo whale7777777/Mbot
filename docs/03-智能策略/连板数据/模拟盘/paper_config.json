@@ -16,7 +16,7 @@
   "bot_name": "连板模拟盘机器人",
   "sh_min_amount_yi": 9000,
   "sh_warn_amount_yi": 10000,
-  "below_sh_min_no_buy": true,
+  "below_sh_min_no_buy": false,
   "asphyxia_max_exposure_pct": 0.1,
   "asphyxia_single_position_pct": 0.1,
   "index_5d_drop_ice_pct": 3.0,
