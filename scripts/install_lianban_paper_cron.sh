@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
-# 安装连板模拟盘竞价后飞书推送（交易日 09:25 触发 → 竞价结束 → 分析 → 推送）
+# 安装连板模拟盘竞价后飞书推送
+#
+# 推荐：GitHub Actions（.github/workflows/lianban-paper-notify.yml）
+#   在仓库 Settings → Secrets 配置 FEISHU_APP_ID / FEISHU_APP_SECRET 后自动运行。
+#
+# 本机备选：系统 crontab（需持久化服务器，Cloud Agent 环境重启后会丢失）
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -51,5 +56,7 @@ if command -v crontab >/dev/null 2>&1; then
   (crontab -l 2>/dev/null || true; echo "$MARKER"; echo "$CRON_LINE") | crontab -
   echo "已安装系统 crontab（UTC 01:25 = 北京时间 09:25 触发）"
 else
-  echo "提示：系统无 crontab，已依赖 Hermes cron（若已安装）"
+  echo "提示：系统无 crontab。"
+  echo "推荐改用 GitHub Actions：.github/workflows/lianban-paper-notify.yml"
+  echo "请在仓库 Settings → Secrets 添加 FEISHU_APP_ID / FEISHU_APP_SECRET"
 fi
