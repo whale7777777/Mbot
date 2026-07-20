@@ -80,7 +80,24 @@ python scripts/lianban_paper.py backfill --from 20260710 --to 20260716 --reset
 # 查看状态 / 重置
 python scripts/lianban_paper.py status
 python scripts/lianban_paper.py reset
+
+# 竞价结束后推送预期操作到飞书群
+python scripts/lianban_paper_notify.py
+python scripts/lianban_paper_notify.py --skip-wait --print-only
+
+# 收盘后推送当日结算总结到飞书群
+python scripts/lianban_paper_close_notify.py
+python scripts/lianban_paper_close_notify.py --skip-wait --print-only
 ```
+
+### 定时推送（GitHub Actions）
+
+| 时间（北京时间） | Workflow | 说明 |
+|------------------|----------|------|
+| 09:25 后 | `lianban-paper-notify.yml` | 竞价结束 → 分析 → 推送预期操作 |
+| 15:00 后 | `lianban-paper-close-notify.yml` | 收盘 → 结算 → 推送收盘总结 |
+
+需在仓库 Settings → Secrets 配置 `FEISHU_APP_ID`、`FEISHU_APP_SECRET`。
 
 ## 免责声明
 

@@ -27,5 +27,8 @@
   "lark_cli_bin": "lark-cli",
   "auction_end_time": "09:25",
   "auction_retry_seconds": 30,
-  "auction_max_retries": 6
+  "auction_max_retries": 6,
+  "market_close_time": "15:00",
+  "close_retry_seconds": 60,
+  "close_max_retries": 8
 }
