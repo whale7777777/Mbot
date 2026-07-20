@@ -196,12 +196,46 @@ def fetch_sh_amount_yi(trade_date: str) -> float | None:
     return None
 
 
-def assess_market_volume(trade_date: str, cfg: dict[str, Any]) -> dict[str, Any]:
-    """全市场量能评估（以上证成交额为锚）。"""
-    sh_yi = fetch_sh_amount_yi(trade_date)
+def assess_market_volume(
+    trade_date: str,
+    cfg: dict[str, Any],
+    *,
+    phase: str = "full_day",
+) -> dict[str, Any]:
+    """全市场量能评估（以上证成交额为锚）。
+
+    phase:
+      - full_day: 收盘后模拟盘，使用全天阈值（如 9000/10000 亿）
+      - auction: 竞价结束后盘前推送，全天阈值不适用，仅作参考展示
+    """
     min_yi = float(cfg.get("sh_min_amount_yi", 9000))
     warn_yi = float(cfg.get("sh_warn_amount_yi", 10000))
     below_no_buy = bool(cfg.get("below_sh_min_no_buy", True))
+
+    if phase == "auction":
+        sh_yi = fetch_sh_amount_yi(trade_date)
+        if sh_yi is None:
+            note = (
+                f"竞价阶段不适用全天量能阈值（{min_yi:.0f}/{warn_yi:.0f} 亿），"
+                "收盘后再评估是否窒息"
+            )
+        else:
+            note = (
+                f"当前上证成交额约 {sh_yi:.0f} 亿（盘中累计，非全天），"
+                f"全天阈值 {min_yi:.0f}/{warn_yi:.0f} 亿收盘后再评估"
+            )
+        return {
+            "sh_amount_yi": sh_yi,
+            "volume_state": "竞价暂不评估",
+            "is_asphyxia": False,
+            "block_new_buy": False,
+            "max_exposure_pct": None,
+            "single_position_pct": None,
+            "note": note,
+            "phase": "auction",
+        }
+
+    sh_yi = fetch_sh_amount_yi(trade_date)
 
     if sh_yi is None:
         return {
@@ -726,11 +760,13 @@ def process_buys(
     trades: list[dict],
     cfg: dict[str, Any],
     journal: dict,
+    *,
+    volume_phase: str = "full_day",
 ) -> None:
     stocks = today_data.get("stocks", [])
     pool_size = len(stocks)
     emotion = market_emotion_label(pool_size, cfg)
-    volume = assess_market_volume(trade_date, cfg)
+    volume = assess_market_volume(trade_date, cfg, phase=volume_phase)
 
     pool_exposure = max_total_exposure_pct(pool_size, cfg)
     max_exposure = pool_exposure
@@ -1259,7 +1295,9 @@ def preview_expected_operations(
             )
             journal["sell_watch"] = []
 
-    process_buys(pf_copy, trade_date, today_data, trades_copy, cfg, journal)
+    process_buys(
+        pf_copy, trade_date, today_data, trades_copy, cfg, journal, volume_phase="auction"
+    )
 
     prices = get_prices_from_pool(today_data, pf)
     journal["portfolio"] = {
@@ -1294,6 +1332,11 @@ def format_feishu_expect(journal: dict[str, Any], cfg: dict[str, Any]) -> str:
     ]
     if market.get("volume_note"):
         lines.append(f"- 量能：{market['volume_note']}")
+    min_yi = cfg.get("sh_min_amount_yi", 9000)
+    warn_yi = cfg.get("sh_warn_amount_yi", 10000)
+    lines.append(
+        f"- 量能风控：竞价阶段**不启用**全天阈值（{min_yi}/{warn_yi} 亿），收盘模拟盘再判定"
+    )
 
     lines += ["", "**持仓监控（卖出预期）**"]
     if journal.get("sells"):
