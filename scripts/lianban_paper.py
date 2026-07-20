@@ -60,6 +60,20 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "stamp_tax_sell": 0.001,
     "min_commission": 5.0,
     "bot_name": "连板模拟盘机器人",
+    # 量能风控（上证成交额，亿元）
+    "sh_min_amount_yi": 9000,
+    "sh_warn_amount_yi": 10000,
+    "below_sh_min_no_buy": True,
+    "asphyxia_max_exposure_pct": 0.1,
+    "asphyxia_single_position_pct": 0.1,
+    # 指数退潮 + 缩量 → 强制冰点情绪
+    "index_5d_drop_ice_pct": 3.0,
+    "index_vol_shrink_ratio": 0.85,
+    # 风格/主线：连板池内同题材簇至少 N 只才买
+    "min_cluster_size_buy": 3,
+    "require_mainline_cluster": True,
+    # 冰点期不买高位板（≥此板数则跳过）
+    "cold_pool_max_boards_buy": 2,
 }
 
 
@@ -216,18 +230,208 @@ def cluster_sizes(stocks: list[dict]) -> dict[str, int]:
     return sizes
 
 
-def market_emotion_label(pool_size: int, cfg: dict[str, Any]) -> str:
-    if pool_size <= cfg["cold_pool_threshold"]:
-        return "冰点/谨慎"
-    if pool_size <= 10:
-        return "修复/分化"
-    return "偏暖/积极"
+def trade_date_to_iso(trade_date: str) -> str:
+    return f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:8]}"
 
 
-def max_total_exposure_pct(pool_size: int, cfg: dict[str, Any]) -> float:
-    if pool_size <= cfg["cold_pool_threshold"]:
-        return cfg["cold_pool_max_pct"]
-    return cfg["warm_pool_max_pct"]
+def fetch_sh_index_series(trade_date: str, lookback: int = 10) -> list[dict[str, float]]:
+    """上证指数近 N 日收盘与成交额（亿元），含 trade_date 当日。"""
+    try:
+        import akshare as ak
+    except ImportError:
+        return []
+
+    iso = trade_date_to_iso(trade_date)
+    try:
+        df = ak.stock_zh_index_daily_em(symbol="sh000001")
+        if df is None or df.empty:
+            return []
+        df = df.copy()
+        df["date"] = df["date"].astype(str).str[:10]
+        df = df[df["date"] <= iso].tail(lookback)
+        rows: list[dict[str, float]] = []
+        for _, r in df.iterrows():
+            rows.append(
+                {
+                    "close": float(r["close"]),
+                    "amount_yi": float(r["amount"]) / 1e8,
+                }
+            )
+        return rows
+    except Exception:
+        return []
+
+
+def fetch_sh_amount_yi(trade_date: str) -> float | None:
+    series = fetch_sh_index_series(trade_date, lookback=1)
+    return series[-1]["amount_yi"] if series else None
+
+
+def assess_market_volume(trade_date: str, cfg: dict[str, Any]) -> dict[str, Any]:
+    """全市场量能评估（以上证成交额为锚）。"""
+    sh_yi = fetch_sh_amount_yi(trade_date)
+    min_yi = float(cfg.get("sh_min_amount_yi", 9000))
+    warn_yi = float(cfg.get("sh_warn_amount_yi", 10000))
+    below_no_buy = bool(cfg.get("below_sh_min_no_buy", True))
+
+    if sh_yi is None:
+        return {
+            "sh_amount_yi": None,
+            "volume_state": "未知",
+            "is_asphyxia": False,
+            "block_new_buy": False,
+            "max_exposure_pct": None,
+            "single_position_pct": None,
+            "note": "未获取到上证成交额，不触发量能风控",
+        }
+
+    if sh_yi < min_yi:
+        return {
+            "sh_amount_yi": sh_yi,
+            "volume_state": "窒息/冰点",
+            "is_asphyxia": True,
+            "block_new_buy": below_no_buy,
+            "max_exposure_pct": float(cfg.get("asphyxia_max_exposure_pct", 0.1)),
+            "single_position_pct": float(cfg.get("asphyxia_single_position_pct", 0.1)),
+            "note": f"上证成交额{sh_yi:.0f}亿<{min_yi:.0f}亿，量能窒息"
+            + ("，禁止新开仓" if below_no_buy else "，仅轻仓"),
+        }
+
+    if sh_yi < warn_yi:
+        return {
+            "sh_amount_yi": sh_yi,
+            "volume_state": "缩量观望",
+            "is_asphyxia": False,
+            "block_new_buy": False,
+            "max_exposure_pct": float(cfg.get("cold_pool_max_pct", 0.5)),
+            "single_position_pct": float(cfg.get("single_position_pct", 0.4)) * 0.75,
+            "note": f"上证成交额{sh_yi:.0f}亿<{warn_yi:.0f}亿，缩量观望",
+        }
+
+    return {
+        "sh_amount_yi": sh_yi,
+        "volume_state": "正常",
+        "is_asphyxia": False,
+        "block_new_buy": False,
+        "max_exposure_pct": None,
+        "single_position_pct": None,
+        "note": f"上证成交额{sh_yi:.0f}亿",
+    }
+
+
+def assess_index_trend(trade_date: str, cfg: dict[str, Any]) -> dict[str, Any]:
+    """近 5 日指数涨跌与量能是否萎缩。"""
+    series = fetch_sh_index_series(trade_date, lookback=6)
+    if len(series) < 2:
+        return {
+            "index_5d_pct": None,
+            "vol_shrinking": False,
+            "force_ice": False,
+            "note": "指数数据不足",
+        }
+
+    start_close = series[max(0, len(series) - 6)]["close"]
+    end_close = series[-1]["close"]
+    idx_5d_pct = (end_close / start_close - 1) * 100
+
+    amounts = [r["amount_yi"] for r in series]
+    today_amt = amounts[-1]
+    avg_amt = sum(amounts[:-1]) / max(1, len(amounts) - 1)
+    shrink_ratio = float(cfg.get("index_vol_shrink_ratio", 0.85))
+    vol_shrinking = today_amt < avg_amt * shrink_ratio
+
+    drop_thr = float(cfg.get("index_5d_drop_ice_pct", 3.0))
+    force_ice = idx_5d_pct <= -drop_thr and vol_shrinking
+    note = f"上证5日{idx_5d_pct:+.1f}%"
+    if vol_shrinking:
+        note += f"，量能较均量萎缩（{today_amt:.0f}/{avg_amt:.0f}亿）"
+    if force_ice:
+        note += "，退潮+缩量→强制冰点"
+
+    return {
+        "index_5d_pct": round(idx_5d_pct, 2),
+        "vol_shrinking": vol_shrinking,
+        "force_ice": force_ice,
+        "note": note,
+    }
+
+
+def assess_market_context(
+    trade_date: str, pool_size: int, cfg: dict[str, Any]
+) -> dict[str, Any]:
+    """综合情绪：连板宽度 + 量能 + 指数趋势。"""
+    volume = assess_market_volume(trade_date, cfg)
+    index_trend = assess_index_trend(trade_date, cfg)
+
+    if volume.get("is_asphyxia") or index_trend.get("force_ice"):
+        emotion = "冰点/谨慎"
+    elif pool_size <= cfg["cold_pool_threshold"]:
+        emotion = "冰点/谨慎"
+    elif pool_size <= 10:
+        emotion = "修复/分化"
+    else:
+        emotion = "偏暖/积极"
+
+    if index_trend.get("force_ice") and emotion == "修复/分化":
+        emotion = "冰点/谨慎"
+
+    if volume.get("max_exposure_pct") is not None:
+        max_exposure = volume["max_exposure_pct"]
+    elif pool_size <= cfg["cold_pool_threshold"]:
+        max_exposure = cfg["cold_pool_max_pct"]
+    else:
+        max_exposure = cfg["warm_pool_max_pct"]
+
+    if index_trend.get("force_ice"):
+        max_exposure = min(max_exposure, float(cfg.get("asphyxia_max_exposure_pct", 0.1)))
+
+    single_pct = volume.get("single_position_pct") or cfg["single_position_pct"]
+
+    return {
+        "pool_size": pool_size,
+        "emotion": emotion,
+        "max_exposure_pct": max_exposure,
+        "single_position_pct": single_pct,
+        "volume": volume,
+        "index_trend": index_trend,
+        "block_new_buy": bool(volume.get("block_new_buy")),
+    }
+
+
+def passes_buy_filters(
+    stock: dict,
+    sizes: dict[str, int],
+    ctx: dict[str, Any],
+    cfg: dict[str, Any],
+) -> tuple[bool, str]:
+    """风格转换 + 冰点高位板过滤。"""
+    boards = int(stock["连板数"])
+    theme = stock.get("题材簇") or "其他"
+    cluster_n = sizes.get(theme, 0)
+    pool_size = int(ctx.get("pool_size", 0))
+
+    if cfg.get("require_mainline_cluster", True):
+        min_cluster = int(cfg.get("min_cluster_size_buy", 3))
+        if cluster_n < min_cluster:
+            return False, f"非主线簇({theme}×{cluster_n}<{min_cluster})"
+
+    cold_thr = int(cfg.get("cold_pool_threshold", 6))
+    max_boards_cold = int(cfg.get("cold_pool_max_boards_buy", 2))
+    if pool_size <= cold_thr and boards > max_boards_cold:
+        return False, f"冰点期不买{boards}板(上限{max_boards_cold}板)"
+
+    return True, ""
+
+
+def resolve_prev_trade_date(trade_date: str) -> str | None:
+    """已落盘交易日中，trade_date 的上一交易日（新到旧列表）。"""
+    dates = list_daily_dates()
+    if trade_date not in dates:
+        return None
+    idx = dates.index(trade_date)
+    if idx + 1 < len(dates):
+        return dates[idx + 1]
+    return None
 
 
 def score_stock(stock: dict, sizes: dict[str, int], cfg: dict[str, Any]) -> tuple[float, list[str]]:
@@ -292,7 +496,12 @@ def score_stock(stock: dict, sizes: dict[str, int], cfg: dict[str, Any]) -> tupl
     return score, reasons
 
 
-def rank_candidates(stocks: list[dict], held: set[str], cfg: dict[str, Any]) -> list[dict]:
+def rank_candidates(
+    stocks: list[dict],
+    held: set[str],
+    cfg: dict[str, Any],
+    ctx: dict[str, Any] | None = None,
+) -> list[dict]:
     sizes = cluster_sizes(stocks)
     ranked = []
     for s in stocks:
@@ -300,6 +509,12 @@ def rank_candidates(stocks: list[dict], held: set[str], cfg: dict[str, Any]) -> 
         if code in held:
             continue
         sc, reasons = score_stock(s, sizes, cfg)
+        can_buy = True
+        filter_note = ""
+        if ctx is not None:
+            can_buy, filter_note = passes_buy_filters(s, sizes, ctx, cfg)
+            if not can_buy and filter_note:
+                reasons.append(filter_note)
         ranked.append(
             {
                 "stock": s,
@@ -307,6 +522,8 @@ def rank_candidates(stocks: list[dict], held: set[str], cfg: dict[str, Any]) -> 
                 "score": sc,
                 "reasons": reasons,
                 "theme": s.get("题材簇") or "其他",
+                "can_buy": can_buy,
+                "filter_note": filter_note,
             }
         )
     ranked.sort(key=lambda x: x["score"], reverse=True)
@@ -473,14 +690,21 @@ def process_buys(
 ) -> None:
     stocks = today_data.get("stocks", [])
     pool_size = len(stocks)
-    emotion = market_emotion_label(pool_size, cfg)
+    ctx = assess_market_context(trade_date, pool_size, cfg)
+    emotion = ctx["emotion"]
     journal["market"] = {
         "pool_size": pool_size,
         "emotion": emotion,
-        "max_exposure_pct": max_total_exposure_pct(pool_size, cfg),
+        "max_exposure_pct": ctx["max_exposure_pct"],
+        "sh_amount_yi": ctx["volume"].get("sh_amount_yi"),
+        "volume_state": ctx["volume"].get("volume_state"),
+        "index_5d_pct": ctx["index_trend"].get("index_5d_pct"),
+        "block_new_buy": ctx["block_new_buy"],
+        "volume_note": ctx["volume"].get("note"),
+        "index_note": ctx["index_trend"].get("note"),
     }
 
-    ranked = rank_candidates(stocks, pf.position_codes, cfg)
+    ranked = rank_candidates(stocks, pf.position_codes, cfg, ctx)
     journal["candidates"] = [
         {
             "code": r["code"],
@@ -490,9 +714,17 @@ def process_buys(
             "prob_pct": r["stock"].get("晋级概率_pct"),
             "theme": r["theme"],
             "reasons": r["reasons"],
+            "can_buy": r.get("can_buy", True),
         }
         for r in ranked[:8]
     ]
+
+    if ctx["block_new_buy"]:
+        journal["buys"] = []
+        journal["buy_skip"] = (
+            f"量能风控禁止新开仓（{ctx['volume'].get('note', '')}）"
+        )
+        return
 
     max_positions = int(cfg["max_positions"])
     slots = max_positions - len(pf.positions)
@@ -502,15 +734,17 @@ def process_buys(
         return
 
     total_mv = portfolio_market_value(pf, {})
-    max_invest = total_mv * max_total_exposure_pct(pool_size, cfg)
+    max_invest = total_mv * ctx["max_exposure_pct"]
     current_invested = sum(p.shares * p.cost_price for p in pf.positions)
     budget = min(pf.cash, max(0, max_invest - current_invested))
-    per_position_cap = total_mv * cfg["single_position_pct"]
+    per_position_cap = total_mv * ctx["single_position_pct"]
 
     buys = []
     for cand in ranked:
         if slots <= 0 or budget < 1000:
             break
+        if not cand.get("can_buy", True):
+            continue
         if cand["score"] < cfg["min_buy_score"]:
             continue
 
@@ -572,7 +806,7 @@ def process_buys(
 
     journal["buys"] = buys
     if not buys and not journal.get("buy_skip"):
-        journal["buy_skip"] = f"无评分≥{cfg['min_buy_score']}的可买标的"
+        journal["buy_skip"] = f"无评分≥{cfg['min_buy_score']}且通过风控的可买标的"
 
 
 def write_daily_journal(trade_date: str, journal: dict, pf: Portfolio, prices: dict[str, float]) -> None:
@@ -584,24 +818,35 @@ def write_daily_journal(trade_date: str, journal: dict, pf: Portfolio, prices: d
         f"# 模拟盘日报（{trade_date}）",
         "",
         f"- 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        f"- 机器人：连板策略模拟盘（晋级概率 + 封板质量 + 主线簇）",
+        f"- 机器人：连板策略模拟盘（晋级概率 + 封板质量 + 主线簇 + **量能/风格风控**）",
         "",
         "## 盘面观察",
         "",
         f"- 连板池（≥2）：**{journal['market']['pool_size']}** 只",
         f"- 情绪判断：**{journal['market']['emotion']}**",
+    ]
+    mkt = journal["market"]
+    if mkt.get("sh_amount_yi") is not None:
+        lines.append(f"- 上证成交额：**{mkt['sh_amount_yi']:.0f}** 亿元（{mkt.get('volume_state', '-')}）")
+    if mkt.get("index_5d_pct") is not None:
+        lines.append(f"- 上证5日涨跌：**{mkt['index_5d_pct']:+.2f}%**")
+    if mkt.get("block_new_buy"):
+        lines.append("- 量能风控：**禁止新开仓**")
+    lines += [
         f"- 最大仓位上限：{journal['market']['max_exposure_pct']*100:.0f}%",
         "",
         "## 候选评分（Top）",
         "",
-        "| 代码 | 名称 | 板数 | 评分 | 晋级率 | 题材 | 因子 |",
-        "|------|------|------|------|--------|------|------|",
+        "| 代码 | 名称 | 板数 | 评分 | 晋级率 | 可买 | 题材 | 因子 |",
+        "|------|------|------|------|--------|------|------|------|",
     ]
 
     for c in journal.get("candidates", [])[:6]:
+        can = "是" if c.get("can_buy", True) else "否"
         lines.append(
             f"| {c['code']} | {c['name']} | {c['boards']} | {c['score']} | "
-            f"{c.get('prob_pct', '-')} | {c.get('theme', '-')} | {'; '.join(c.get('reasons', [])[:3])} |"
+            f"{c.get('prob_pct', '-')} | {can} | {c.get('theme', '-')} | "
+            f"{'; '.join(c.get('reasons', [])[:3])} |"
         )
 
     lines += ["", "## 今日操作", ""]
@@ -739,11 +984,7 @@ def run_single_day(
         return {"skipped": True, "reason": f"已处理过 {trade_date}"}
 
     if prev_date is None:
-        dates = sorted(list_daily_dates())
-        if trade_date in dates:
-            idx = dates.index(trade_date)
-            if idx + 1 < len(dates):
-                prev_date = dates[idx + 1]
+        prev_date = resolve_prev_trade_date(trade_date)
 
     journal: dict[str, Any] = {
         "date": trade_date,

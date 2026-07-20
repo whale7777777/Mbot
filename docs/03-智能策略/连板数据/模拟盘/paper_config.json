@@ -13,5 +13,15 @@
   "commission_rate": 0.0003,
   "stamp_tax_sell": 0.001,
   "min_commission": 5.0,
-  "bot_name": "连板模拟盘机器人"
+  "bot_name": "连板模拟盘机器人",
+  "sh_min_amount_yi": 9000,
+  "sh_warn_amount_yi": 10000,
+  "below_sh_min_no_buy": true,
+  "asphyxia_max_exposure_pct": 0.1,
+  "asphyxia_single_position_pct": 0.1,
+  "index_5d_drop_ice_pct": 3.0,
+  "index_vol_shrink_ratio": 0.85,
+  "min_cluster_size_buy": 3,
+  "require_mainline_cluster": true,
+  "cold_pool_max_boards_buy": 2
 }
