@@ -217,7 +217,7 @@ def build_parser() -> argparse.ArgumentParser:
         "paper_cmd",
         nargs="?",
         default="run",
-        choices=["run", "backfill", "status", "reset", "expect", "notify"],
+        choices=["run", "backfill", "status", "reset", "expect", "notify", "close-notify"],
         help="子命令（默认 run）",
     )
     sp_paper.add_argument("--date", help="交易日 YYYYMMDD")
@@ -225,9 +225,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp_paper.add_argument("--from", dest="date_from", help="回测起始日")
     sp_paper.add_argument("--to", dest="date_to", help="回测结束日")
     sp_paper.add_argument("--reset", action="store_true", help="回测前重置")
-    sp_paper.add_argument("--print-only", action="store_true", help="notify：仅打印")
-    sp_paper.add_argument("--dry-run", action="store_true", help="notify：不实际发送")
-    sp_paper.add_argument("--skip-wait", action="store_true", help="notify/expect：不等待竞价结束")
+    sp_paper.add_argument("--print-only", action="store_true", help="notify/close-notify：仅打印")
+    sp_paper.add_argument("--dry-run", action="store_true", help="notify/close-notify：不实际发送")
+    sp_paper.add_argument("--skip-wait", action="store_true", help="notify/close-notify/expect：跳过等待时刻")
     sp_paper.set_defaults(func=cmd_paper)
 
     return p

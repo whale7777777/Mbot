@@ -1,0 +1,46 @@
+name: Lianban Paper Notify
+
+# 北京时间 09:25（UTC 01:25）工作日触发 → 竞价结束后分析 → 推送飞书群
+on:
+  schedule:
+    - cron: "25 1 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: |
+          pip install pandas akshare
+          npm install -g @larksuite/cli
+
+      - name: Configure lark-cli (bot)
+        env:
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+        run: |
+          if [ -z "$FEISHU_APP_ID" ] || [ -z "$FEISHU_APP_SECRET" ]; then
+            echo "请在仓库 Settings → Secrets 配置 FEISHU_APP_ID 和 FEISHU_APP_SECRET"
+            exit 1
+          fi
+          echo "$FEISHU_APP_SECRET" | lark-cli config init \
+            --app-id "$FEISHU_APP_ID" \
+            --app-secret-stdin
+
+      - name: Run auction analysis and notify
+        env:
+          TZ: Asia/Shanghai
+        run: |
+          python scripts/lianban_paper_notify.py --skip-wait

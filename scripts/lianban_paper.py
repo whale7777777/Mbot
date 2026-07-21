@@ -78,6 +78,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "auction_end_time": "09:25",
     "auction_retry_seconds": 30,
     "auction_max_retries": 6,
+    "market_close_time": "15:00",
+    "close_retry_seconds": 60,
+    "close_max_retries": 8,
 }
 
 
@@ -196,12 +199,46 @@ def fetch_sh_amount_yi(trade_date: str) -> float | None:
     return None
 
 
-def assess_market_volume(trade_date: str, cfg: dict[str, Any]) -> dict[str, Any]:
-    """全市场量能评估（以上证成交额为锚）。"""
-    sh_yi = fetch_sh_amount_yi(trade_date)
+def assess_market_volume(
+    trade_date: str,
+    cfg: dict[str, Any],
+    *,
+    phase: str = "full_day",
+) -> dict[str, Any]:
+    """全市场量能评估（以上证成交额为锚）。
+
+    phase:
+      - full_day: 收盘后模拟盘，使用全天阈值（如 9000/10000 亿）
+      - auction: 竞价结束后盘前推送，全天阈值不适用，仅作参考展示
+    """
     min_yi = float(cfg.get("sh_min_amount_yi", 9000))
     warn_yi = float(cfg.get("sh_warn_amount_yi", 10000))
     below_no_buy = bool(cfg.get("below_sh_min_no_buy", True))
+
+    if phase == "auction":
+        sh_yi = fetch_sh_amount_yi(trade_date)
+        if sh_yi is None:
+            note = (
+                f"竞价阶段不适用全天量能阈值（{min_yi:.0f}/{warn_yi:.0f} 亿），"
+                "收盘后再评估是否窒息"
+            )
+        else:
+            note = (
+                f"当前上证成交额约 {sh_yi:.0f} 亿（盘中累计，非全天），"
+                f"全天阈值 {min_yi:.0f}/{warn_yi:.0f} 亿收盘后再评估"
+            )
+        return {
+            "sh_amount_yi": sh_yi,
+            "volume_state": "竞价暂不评估",
+            "is_asphyxia": False,
+            "block_new_buy": False,
+            "max_exposure_pct": None,
+            "single_position_pct": None,
+            "note": note,
+            "phase": "auction",
+        }
+
+    sh_yi = fetch_sh_amount_yi(trade_date)
 
     if sh_yi is None:
         return {
@@ -726,11 +763,13 @@ def process_buys(
     trades: list[dict],
     cfg: dict[str, Any],
     journal: dict,
+    *,
+    volume_phase: str = "full_day",
 ) -> None:
     stocks = today_data.get("stocks", [])
     pool_size = len(stocks)
     emotion = market_emotion_label(pool_size, cfg)
-    volume = assess_market_volume(trade_date, cfg)
+    volume = assess_market_volume(trade_date, cfg, phase=volume_phase)
 
     pool_exposure = max_total_exposure_pct(pool_size, cfg)
     max_exposure = pool_exposure
@@ -1143,17 +1182,34 @@ def wait_until_auction_end(trade_date: str, cfg: dict[str, Any]) -> None:
         time.sleep(wait_s)
 
 
-def refresh_today_pool(trade_date: str, cfg: dict[str, Any]) -> tuple[bool, str]:
+def wait_until_market_close(trade_date: str, cfg: dict[str, Any]) -> None:
+    """收盘后（默认 15:00 北京时间）再开始拉数据与结算。"""
+    tz = ZoneInfo("Asia/Shanghai")
+    now = datetime.now(tz)
+    hour, minute = _parse_hhmm(str(cfg.get("market_close_time", "15:00")))
+    target = datetime.strptime(trade_date, "%Y%m%d").replace(
+        hour=hour, minute=minute, second=0, microsecond=0, tzinfo=tz
+    )
+    if now < target:
+        wait_s = (target - now).total_seconds()
+        print(f"等待收盘 {cfg.get('market_close_time', '15:00')}（约 {wait_s:.0f}s）...")
+        time.sleep(wait_s)
+
+
+def refresh_today_pool(trade_date: str, cfg: dict[str, Any], *, label: str = "当日") -> tuple[bool, str]:
     """竞价结束后拉取当日涨停池并落盘，供预期操作分析使用。"""
     scripts_dir = Path(__file__).resolve().parent
     root = scripts_dir.parent
     python = sys.executable
     retries = int(cfg.get("auction_max_retries", 6))
     interval = int(cfg.get("auction_retry_seconds", 30))
+    if label == "收盘":
+        retries = int(cfg.get("close_max_retries", 8))
+        interval = int(cfg.get("close_retry_seconds", 60))
     last_err = ""
 
     for attempt in range(1, retries + 1):
-        print(f"拉取当日连板池 {trade_date}（第 {attempt}/{retries} 次）...")
+        print(f"拉取{label}连板池 {trade_date}（第 {attempt}/{retries} 次）...")
         proc = subprocess.run(
             [python, str(scripts_dir / "lianban_today.py"), "--date", trade_date],
             cwd=root,
@@ -1168,7 +1224,7 @@ def refresh_today_pool(trade_date: str, cfg: dict[str, Any]) -> tuple[bool, str]
             if data is not None:
                 pool_size = len(data.get("stocks", []))
                 print(f"连板池已更新：{trade_date}，样本 {pool_size} 只")
-                return True, f"{trade_date} 竞价后连板池（{pool_size} 只）"
+                return True, f"{trade_date} {label}连板池（{pool_size} 只）"
         else:
             last_err = f"未生成 {daily_json(trade_date)}"
 
@@ -1187,7 +1243,182 @@ def prepare_auction_analysis(
 ) -> tuple[bool, str]:
     if not skip_wait:
         wait_until_auction_end(trade_date, cfg)
-    return refresh_today_pool(trade_date, cfg)
+    return refresh_today_pool(trade_date, cfg, label="竞价后")
+
+
+def prepare_close_analysis(
+    trade_date: str,
+    cfg: dict[str, Any],
+    *,
+    skip_wait: bool = False,
+) -> tuple[bool, str]:
+    if not skip_wait:
+        wait_until_market_close(trade_date, cfg)
+    return refresh_today_pool(trade_date, cfg, label="收盘")
+
+
+def _build_market_snapshot(
+    trade_date: str,
+    today_data: dict,
+    cfg: dict[str, Any],
+    *,
+    volume_phase: str,
+) -> dict[str, Any]:
+    stocks = today_data.get("stocks", [])
+    pool_size = len(stocks)
+    emotion = market_emotion_label(pool_size, cfg)
+    volume = assess_market_volume(trade_date, cfg, phase=volume_phase)
+    pool_exposure = max_total_exposure_pct(pool_size, cfg)
+    max_exposure = pool_exposure
+    if volume.get("max_exposure_pct") is not None:
+        max_exposure = min(max_exposure, volume["max_exposure_pct"])
+    return {
+        "pool_size": pool_size,
+        "emotion": emotion,
+        "max_exposure_pct": max_exposure,
+        "sh_amount_yi": volume.get("sh_amount_yi"),
+        "volume_state": volume.get("volume_state"),
+        "is_asphyxia": volume.get("is_asphyxia"),
+        "volume_note": volume.get("note"),
+    }
+
+
+def reconstruct_journal_from_trades(
+    trade_date: str,
+    today_data: dict,
+    cfg: dict[str, Any],
+) -> dict[str, Any]:
+    day_trades = [t for t in load_trades() if t.get("date") == trade_date]
+    return {
+        "date": trade_date,
+        "trade_date": trade_date,
+        "generated_at": datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d %H:%M:%S"),
+        "data_phase": "收盘后",
+        "already_settled": True,
+        "market": _build_market_snapshot(trade_date, today_data, cfg, volume_phase="full_day"),
+        "candidates": [],
+        "sells": [t for t in day_trades if t.get("action") == "卖出"],
+        "buys": [t for t in day_trades if t.get("action") == "买入"],
+        "buy_failed": [],
+        "hold": [],
+        "buy_skip": "今日已结算（自成交记录还原）",
+    }
+
+
+def execute_close_day(trade_date: str, cfg: dict[str, Any]) -> tuple[dict[str, Any], Portfolio, str | None]:
+    """收盘后拉池、跑模拟盘、返回当日 journal。"""
+    save_config_template()
+    pf = load_portfolio(cfg)
+    trades = load_trades()
+    today_data = load_daily_data(trade_date)
+    if not today_data:
+        return {}, pf, f"缺少连板数据: {daily_json(trade_date)}"
+
+    journal = run_single_day(trade_date, pf, trades, cfg)
+    pf = load_portfolio(cfg)
+
+    if journal.get("skipped"):
+        journal = reconstruct_journal_from_trades(trade_date, today_data, cfg)
+    else:
+        journal["trade_date"] = trade_date
+        journal["date"] = trade_date
+        journal["generated_at"] = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d %H:%M:%S")
+        journal["data_phase"] = "收盘后"
+        journal["already_settled"] = False
+        if "market" not in journal or not journal["market"]:
+            journal["market"] = _build_market_snapshot(
+                trade_date, today_data, cfg, volume_phase="full_day"
+            )
+
+    prices = get_prices_from_pool(today_data, pf)
+    mv = portfolio_market_value(pf, prices)
+    journal["portfolio"] = {
+        "cash": pf.cash,
+        "market_value": mv,
+        "return_pct": (mv / pf.initial_cash - 1) * 100,
+        "positions": len(pf.positions),
+    }
+    return journal, pf, None
+
+
+def format_feishu_close_summary(journal: dict[str, Any], cfg: dict[str, Any]) -> str:
+    if journal.get("error"):
+        return f"⚠️ 连板模拟盘收盘总结推送失败\n\n{journal['error']}"
+
+    trade_date = journal.get("trade_date") or journal.get("date", "")
+    bot_name = cfg.get("bot_name", "连板模拟盘机器人")
+    market = journal.get("market") or {}
+    pf = journal.get("portfolio") or {}
+
+    lines = [
+        f"**{bot_name} · 收盘总结（{trade_date}）**",
+        "",
+        f"生成时间：{journal.get('generated_at', '')}",
+    ]
+    if journal.get("already_settled"):
+        lines.append("> 今日模拟盘此前已结算，以下为成交记录还原")
+    lines += [
+        "",
+        "**盘面**",
+        f"- 连板池：{market.get('pool_size', '—')} 只",
+        f"- 情绪：{market.get('emotion', '—')}",
+        f"- 上证成交额：**{market.get('sh_amount_yi', '—')}** 亿元",
+        f"- 量能状态：{market.get('volume_state', '—')}",
+        f"- 仓位上限：{market.get('max_exposure_pct', 0) * 100:.0f}%",
+    ]
+    if market.get("volume_note"):
+        lines.append(f"- 量能说明：{market['volume_note']}")
+
+    lines += ["", "**今日操作**"]
+    if journal.get("sells"):
+        lines.append("")
+        lines.append("卖出：")
+        for s in journal["sells"]:
+            lines.append(
+                f"- 🔴 {s['name']}（{s['code']}）{s['shares']}股 @ {s['price']} "
+                f"盈亏 {s.get('pnl', 0):+.2f}（{s.get('pnl_pct', 0):+.2f}%）"
+            )
+    else:
+        lines.append("- 无卖出")
+
+    if journal.get("hold"):
+        lines.append("")
+        lines.append("继续持有：")
+        for h in journal["hold"]:
+            lines.append(f"- {h['name']}（{h['code']}）→ {h.get('boards', '?')}板：{h['note']}")
+
+    if journal.get("buy_failed"):
+        lines.append("")
+        lines.append("想买未成交：")
+        for f in journal["buy_failed"]:
+            lines.append(
+                f"- 🟡 {f['name']}（{f['code']}）{f['boards']}板 "
+                f"意向{f['intended_shares']}股 成交概率{f['fill_prob']}%"
+            )
+
+    if journal.get("buys"):
+        lines.append("")
+        lines.append("买入：")
+        for b in journal["buys"]:
+            fill = f" 成交概率{b['fill_prob']}%" if b.get("fill_prob") is not None else ""
+            lines.append(
+                f"- 🟢 {b['name']}（{b['code']}）{b['boards']}板 {b['shares']}股 @ {b['price']} "
+                f"评分{b.get('score', '-')}{fill}"
+            )
+    elif journal.get("buy_skip"):
+        lines.append(f"- 买入：{journal['buy_skip']}")
+    elif not journal.get("buys"):
+        if not journal.get("buy_failed"):
+            lines.append("- 无买入")
+
+    lines += [
+        "",
+        "**收盘持仓**",
+        f"- 现金：{pf.get('cash', 0):,.2f} 元",
+        f"- 总资产：{pf.get('market_value', 0):,.2f} 元（{pf.get('return_pct', 0):+.2f}%）",
+        f"- 持仓：{pf.get('positions', 0)} 只",
+    ]
+    return "\n".join(lines)
 
 
 def preview_expected_operations(
@@ -1259,7 +1490,9 @@ def preview_expected_operations(
             )
             journal["sell_watch"] = []
 
-    process_buys(pf_copy, trade_date, today_data, trades_copy, cfg, journal)
+    process_buys(
+        pf_copy, trade_date, today_data, trades_copy, cfg, journal, volume_phase="auction"
+    )
 
     prices = get_prices_from_pool(today_data, pf)
     journal["portfolio"] = {
@@ -1294,6 +1527,11 @@ def format_feishu_expect(journal: dict[str, Any], cfg: dict[str, Any]) -> str:
     ]
     if market.get("volume_note"):
         lines.append(f"- 量能：{market['volume_note']}")
+    min_yi = cfg.get("sh_min_amount_yi", 9000)
+    warn_yi = cfg.get("sh_warn_amount_yi", 10000)
+    lines.append(
+        f"- 量能风控：竞价阶段**不启用**全天阈值（{min_yi}/{warn_yi} 亿），收盘模拟盘再判定"
+    )
 
     lines += ["", "**持仓监控（卖出预期）**"]
     if journal.get("sells"):
@@ -1435,6 +1673,51 @@ def cmd_notify(args: argparse.Namespace) -> None:
     print(f"已推送竞价后预期操作到飞书群 {cfg.get('feishu_chat_id')}")
 
 
+def cmd_close_notify(args: argparse.Namespace) -> None:
+    cfg = load_config()
+    trade_date = args.date or datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y%m%d")
+
+    ok, pool_note = prepare_close_analysis(
+        trade_date,
+        cfg,
+        skip_wait=getattr(args, "skip_wait", False),
+    )
+    if not ok:
+        text = format_feishu_close_summary({"error": pool_note}, cfg)
+        if getattr(args, "print_only", False):
+            print(text)
+            raise SystemExit(1)
+        result = send_feishu_message(text, cfg, dry_run=getattr(args, "dry_run", False))
+        if not result.get("ok"):
+            print(f"飞书推送失败: {result.get('error')}", file=sys.stderr)
+        raise SystemExit(1)
+
+    journal, _pf, err = execute_close_day(trade_date, cfg)
+    if err:
+        text = format_feishu_close_summary({"error": err}, cfg)
+        if getattr(args, "print_only", False):
+            print(text)
+            raise SystemExit(1)
+        result = send_feishu_message(text, cfg, dry_run=getattr(args, "dry_run", False))
+        if not result.get("ok"):
+            print(f"飞书推送失败: {result.get('error')}", file=sys.stderr)
+        raise SystemExit(1)
+
+    journal["pool_note"] = pool_note
+    text = format_feishu_close_summary(journal, cfg)
+    if getattr(args, "print_only", False):
+        print(text)
+        return
+    result = send_feishu_message(text, cfg, dry_run=getattr(args, "dry_run", False))
+    if not result.get("ok"):
+        print(f"飞书推送失败: {result.get('error')}", file=sys.stderr)
+        raise SystemExit(1)
+    if result.get("dry_run"):
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
+    print(f"已推送收盘总结到飞书群 {cfg.get('feishu_chat_id')}")
+
+
 def cmd_run(args: argparse.Namespace) -> None:
     cfg = load_config()
     save_config_template()
@@ -1567,6 +1850,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp_notify.add_argument("--print-only", action="store_true", help="仅打印，不发送")
     sp_notify.add_argument("--dry-run", action="store_true", help="打印 lark-cli 命令，不发送")
     sp_notify.set_defaults(func=cmd_notify)
+
+    sp_close = sub.add_parser("close-notify", help="收盘后结算模拟盘并推送总结到飞书群")
+    sp_close.add_argument("--date", help="交易日 YYYYMMDD")
+    sp_close.add_argument("--skip-wait", action="store_true", help="不等待 15:00，立即执行")
+    sp_close.add_argument("--print-only", action="store_true", help="仅打印，不发送")
+    sp_close.add_argument("--dry-run", action="store_true", help="打印 lark-cli 命令，不发送")
+    sp_close.set_defaults(func=cmd_close_notify)
     return p
 
 

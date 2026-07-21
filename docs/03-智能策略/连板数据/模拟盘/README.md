@@ -36,7 +36,9 @@
 
 ### 量能窒息风控（上证成交额）
 
-| 上证成交额 | 状态 | 机器人行为 |
+> **仅收盘后模拟盘**（`paper run`）启用。竞价结束后推送（`paper notify`）**不套用**全天阈值——9000/10000 亿是全天量能，竞价阶段不可能达到。
+
+| 上证成交额（全天收盘） | 状态 | 机器人行为 |
 |-----------|------|------------|
 | **< 9000 亿** | 窒息/冰点 | **禁止新开仓**，总仓上限 10%，单票 10% |
 | 9000～10000 亿 | 缩量观望 | 可买但降仓（总仓 ≤50%，单票打 7.5 折） |
@@ -78,7 +80,24 @@ python scripts/lianban_paper.py backfill --from 20260710 --to 20260716 --reset
 # 查看状态 / 重置
 python scripts/lianban_paper.py status
 python scripts/lianban_paper.py reset
+
+# 竞价结束后推送预期操作到飞书群
+python scripts/lianban_paper_notify.py
+python scripts/lianban_paper_notify.py --skip-wait --print-only
+
+# 收盘后推送当日结算总结到飞书群
+python scripts/lianban_paper_close_notify.py
+python scripts/lianban_paper_close_notify.py --skip-wait --print-only
 ```
+
+### 定时推送（GitHub Actions）
+
+| 时间（北京时间） | Workflow | 说明 |
+|------------------|----------|------|
+| 09:25 后 | `lianban-paper-notify.yml` | 竞价结束 → 分析 → 推送预期操作 |
+| 15:00 后 | `lianban-paper-close-notify.yml` | 收盘 → 结算 → 推送收盘总结 |
+
+需在仓库 Settings → Secrets 配置 `FEISHU_APP_ID`、`FEISHU_APP_SECRET`。
 
 ## 免责声明
 
