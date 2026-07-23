@@ -234,13 +234,14 @@ def walk_forward_predictions(
             lookback_pairs=idx,
         )
         for row in current:
+            pred_base = predict_prob(row["boards"], model, None)
             pred = predict_prob(row["boards"], model, row["factors"])
-            if pred is not None:
+            if pred_base is not None and pred is not None:
                 out.append(
                     {
                         **row,
                         "pred_rolling": pred,
-                        "pred_base": row.get("pred"),
+                        "pred_base": pred_base,
                         "pred_final": pred,
                     }
                 )
@@ -269,12 +270,12 @@ def build_report(
         "## 1. 滚动样本外表现",
         "",
         f"- 实证晋级率：{100 * sum(r['actual'] for r in rolling_records) / len(rolling_records):.1f}%",
-        f"- 历史文档预测均值：{_mean_pred(rolling_records, 'pred'):.1f}%",
-        f"- 新滚动预测均值：{_mean_pred(rolling_records, 'pred_rolling'):.1f}%",
+        f"- 仅板高基准预测均值：{_mean_pred(rolling_records, 'pred_base'):.1f}%",
+        f"- 加入晋级因子预测均值：{_mean_pred(rolling_records, 'pred_rolling'):.1f}%",
         "",
         "### 按连板高度：预测 vs 实际",
         "",
-        "| 连板数 | 样本 | 实际晋级率 | 历史预测均值 | 滚动预测均值 | 偏差(滚动-实际) |",
+        "| 连板数 | 样本 | 实际晋级率 | 仅板高预测均值 | 加因子预测均值 | 偏差(因子-实际) |",
         "|--------|------|------------|------------|------------|---------------|",
     ]
 
@@ -282,21 +283,21 @@ def build_report(
         sub = [r for r in rolling_records if r["boards"] == n]
         t = len(sub)
         act = sum(r["actual"] for r in sub) / t if t else 0
-        pred_old = _mean_pred(sub, "pred") / 100.0
+        pred_old = _mean_pred(sub, "pred_base") / 100.0
         pred_new = _mean_pred(sub, "pred_rolling") / 100.0
         lines.append(
             f"| {n} | {t} | {100*act:.1f}% | {100*pred_old:.1f}% | {100*pred_new:.1f}% | "
             f"{100*(pred_new-act):+.1f}pp |"
         )
 
-    b_old = brier(rolling_records, "pred")
+    b_old = brier(rolling_records, "pred_base")
     b_new = brier(rolling_records, "pred_rolling")
     lines.extend(
         [
             "",
             "## 2. 样本外拟合优度",
             "",
-            "| 指标 | 历史文档模型 | 新滚动模型 |",
+            "| 指标 | 仅板高滚动基准 | 加入晋级因子 |",
             f"|------|--------|------------------------|",
             f"| Brier ↓ | {b_old:.4f} | **{b_new:.4f}** |",
             "",
@@ -324,7 +325,8 @@ def build_report(
             "2. **平滑**：仍用拉普拉斯 α=1、向整体率收缩 15%，避免极高板样本过少。",
             "3. **因子**：含大单封板、弱转强等；子样本≥6 时估计乘子，35% 阻尼后限制在 [0.92, 1.08]。",
             "4. **个股概率** = clip(分层率 × 因子乘积, 2%, 92%)。",
-            "5. **滚动验证**：前 5 对作为热身期，此后每一对仅使用此前已揭晓结果拟合。",
+            "5. **滚动验证**：前 5 对作为热身期，此后每一对仅使用此前已揭晓结果拟合；",
+            "   Brier 对比使用同一滚动模型的「仅板高」与「加入因子」预测，避免历史文档回刷造成未来数据泄漏。",
             "",
             "### 因子口径",
             "",
@@ -348,11 +350,11 @@ def build_detail_report(records: list[dict]) -> str:
         f"- 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         f"- 共 {len(records)} 条本地文档滚动样本外记录",
         "",
-        "| T 日 | T+1 | 代码 | 名称 | 连板 | 历史预测 | 滚动预测 | 实际 |",
+        "| T 日 | T+1 | 代码 | 名称 | 连板 | 仅板高预测 | 加因子预测 | 实际 |",
         "|------|-----|------|------|------|----------|----------|------|",
     ]
     for row in records:
-        old = row.get("pred")
+        old = row.get("pred_base")
         old_text = f"{100 * old:.1f}%" if old is not None else "-"
         lines.append(
             f"| {row['T']} | {row['T1']} | {row['code']} | {row['name']} | "
@@ -423,7 +425,7 @@ def main() -> None:
         "evaluation_promotion_rate": (
             sum(r["actual"] for r in rolling_records) / len(rolling_records)
         ),
-        "brier_before": brier(rolling_records, "pred"),
+        "brier_before": brier(rolling_records, "pred_base"),
         "brier_after": brier(rolling_records, "pred_rolling"),
         "pair_days": days,
         "evaluation_pair_days": list(
