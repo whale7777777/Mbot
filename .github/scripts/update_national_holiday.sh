@@ -18,11 +18,11 @@ function parse_holiday() {
   cron_items+=("$(grep '2022' "${_file}" | awk -F ',' '{print $3, $4}' | awk -F '-' '{print $3, $2, $1, $4}' | awk -F ' ' '{print 00, 9, $4, $2}')" + " *")
   cron_items+=("$(grep '2022' "${_file}" | awk -F ',' '{print $3, $4}' | awk -F '-' '{print $3, $2, $1, $4}' | awk -F ' ' '{print 00, 9, $3, $1}')" + " *")
 
-  line=$(grep -n "cron" "${TOP_DIR}/.github/workflows/auto_trade.yml" | cut -d ":" -f 1)
+  line=$(grep -n "cron" "${TOP_DIR}/.github/workflows/auto-trade.yml" | cut -d ":" -f 1)
   echo "${line}"
 
   for cron_item in "${cron_items[@]}"; do
-    sed -i "${line}c     - cron: '${cron_item}' " "${TOP_DIR}/.github/workflows/auto_trade.yml"
+    sed -i "${line}c     - cron: '${cron_item}' " "${TOP_DIR}/.github/workflows/auto-trade.yml"
   done
 }
 
