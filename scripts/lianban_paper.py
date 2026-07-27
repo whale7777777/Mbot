@@ -28,7 +28,6 @@ import subprocess
 import sys
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -47,6 +46,7 @@ from lianban_paths import (
     paper_daily_md,
 )
 from lianban_today import resolve_trade_date
+from lianban_time import beijing_now_str
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "initial_cash": 20000.0,
@@ -416,7 +416,7 @@ def load_portfolio(cfg: dict[str, Any]) -> Portfolio:
             created_at=str(data.get("created_at", "")),
             updated_at=str(data.get("updated_at", "")),
         )
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = beijing_now_str()
     return Portfolio(
         initial_cash=float(cfg["initial_cash"]),
         cash=float(cfg["initial_cash"]),
@@ -427,7 +427,7 @@ def load_portfolio(cfg: dict[str, Any]) -> Portfolio:
 
 def save_portfolio(pf: Portfolio) -> None:
     ensure_paper_dir()
-    pf.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    pf.updated_at = beijing_now_str()
     data = {
         "initial_cash": pf.initial_cash,
         "cash": pf.cash,
@@ -458,7 +458,7 @@ def save_trades(trades: list[dict]) -> None:
 
 def append_trade(trades: list[dict], record: dict) -> None:
     record["id"] = len(trades) + 1
-    record["time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    record["time"] = beijing_now_str()
     trades.append(record)
     save_trades(trades)
 
@@ -945,7 +945,7 @@ def write_daily_journal(trade_date: str, journal: dict, pf: Portfolio, prices: d
     lines = [
         f"# 模拟盘日报（{trade_date}）",
         "",
-        f"- 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"- 生成时间（北京时间）：{beijing_now_str()}",
         f"- 机器人：连板策略模拟盘（晋级概率 + 封板质量 + 主线簇 + **排板成交模拟**）",
         "",
         "## 盘面观察",
@@ -1054,7 +1054,7 @@ def write_master_log(pf: Portfolio, trades: list[dict], prices: dict[str, float]
     lines = [
         "# 连板模拟盘 · 操作记录",
         "",
-        f"> 最后更新：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"> 最后更新（北京时间）：{beijing_now_str()}",
         f"> 初始资金：**{pf.initial_cash:,.0f}** 元",
         "",
         "## 当前状态",
@@ -1751,7 +1751,7 @@ def cmd_backfill(args: argparse.Namespace) -> None:
         pf = Portfolio(
             initial_cash=float(cfg["initial_cash"]),
             cash=float(cfg["initial_cash"]),
-            created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            created_at=beijing_now_str(),
         )
         save_portfolio(pf)
         save_trades([])
@@ -1808,7 +1808,7 @@ def cmd_reset(_: argparse.Namespace) -> None:
     pf = Portfolio(
         initial_cash=float(cfg["initial_cash"]),
         cash=float(cfg["initial_cash"]),
-        created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        created_at=beijing_now_str(),
     )
     save_portfolio(pf)
     save_trades([])

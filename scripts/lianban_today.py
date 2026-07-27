@@ -52,6 +52,7 @@ from lianban_paths import (
     ensure_daily_dir,
 )
 from lianban_similar import attach_similar_fields, build_similar_section
+from lianban_time import beijing_now_str, today_beijing
 from lianban_zt_reason import fetch_zt_reason_map
 
 OUT_DIR = ensure_daily_dir()
@@ -64,7 +65,7 @@ def resolve_trade_date(prefer: str | None, max_scan: int) -> str | None:
         if df is not None and not df.empty:
             return prefer
         return None
-    end = datetime.now().date()
+    end = today_beijing()
     for i in range(0, max_scan + 1):
         d = end - timedelta(days=i)
         ds = d.strftime("%Y%m%d")
@@ -366,7 +367,7 @@ def build_markdown(
     lines = [
         f"# 今日连板股票分析（{trade_date}）",
         "",
-        f"- 生成时间（本地）：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"- 生成时间（北京时间）：{beijing_now_str()}",
         f"- 数据源：见 `docs/03-智能策略/连板数据/lianban_config.json`（TuShare 优先，可回退东方财富）",
         f"- 个股范围：连板数 ≥ {min_boards}（已剔除 ST / *ST / 退市相关名称）",
         "- **晋级概率**：优先读取 `连板数据/连板预测校准.json`（由 `lianban_backtest_30d.py` 滚动验证生成）；",

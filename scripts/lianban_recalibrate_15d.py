@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from lianban_time import beijing_now_str
 from lianban_lib import (
     FACTOR_KEYS,
     FACTOR_LABELS,
@@ -260,7 +261,7 @@ def build_report(
     lines = [
         "# 晋级概率校准分析（全量每日文档滚动实证）",
         "",
-        f"- 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"- 生成时间（北京时间）：{beijing_now_str()}",
         f"- 交易日：{days[0]} ~ {days[-1]}（{len(days)} 日）",
         f"- 可验证相邻日对：{len(days) - 1} 对",
         f"- 全量逐股样本（T 日连板≥{new_model.min_boards}）：**{len(records)}** 只",
@@ -347,7 +348,7 @@ def build_detail_report(records: list[dict]) -> str:
     lines = [
         "# 连板滚动验证明细",
         "",
-        f"- 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"- 生成时间（北京时间）：{beijing_now_str()}",
         f"- 共 {len(records)} 条本地文档滚动样本外记录",
         "",
         "| T 日 | T+1 | 代码 | 名称 | 连板 | 仅板高预测 | 加因子预测 | 实际 |",

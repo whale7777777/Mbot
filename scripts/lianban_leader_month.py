@@ -15,6 +15,7 @@ ROOT = SCRIPTS.parent
 sys.path.insert(0, str(SCRIPTS))
 
 from lianban_paths import DAILY_DIR, DOC_DIR, ensure_doc_dir
+from lianban_time import beijing_now_str
 
 OUT_MD = DOC_DIR / "近月高标龙头分析.md"
 TRADING_DAYS = 22
@@ -185,7 +186,7 @@ def main() -> Path:
     lines = [
         "# 近月高标龙头分析",
         "",
-        f"> 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  ",
+        f"> 生成时间（北京时间）：{beijing_now_str()}  ",
         f"> 数据区间：**{month_dates[0]}** ~ **{month_dates[-1]}**（{len(month_dates)} 个交易日）  ",
         f"> 数据源：`docs/03-智能策略/连板数据/每日/`  ",
         "",

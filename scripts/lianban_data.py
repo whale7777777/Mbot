@@ -23,6 +23,7 @@ ROOT = SCRIPTS_DIR.parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 from lianban_paths import CONFIG_EXAMPLE, CONFIG_PATH, ensure_doc_dir
+from lianban_time import beijing_today_str
 
 PROJECT_CONFIG = ROOT / "utils" / "configure" / "config.json"
 
@@ -202,7 +203,7 @@ def get_open_trade_dates(
     """
     cfg = cfg or load_lianban_config()
     source = str(cfg.get("data_source", "em")).lower()
-    end = end_date or datetime.now().strftime("%Y%m%d")
+    end = end_date or beijing_today_str()
 
     if source in ("em", "akshare", "eastmoney"):
         pass  # 下方按涨停池扫描交易日

@@ -57,6 +57,7 @@ from lianban_paths import (
     DOC_DIR,
     ensure_doc_dir,
 )
+from lianban_time import beijing_now_str
 
 OUT_DIR = DOC_DIR
 OUT_MD = BACKTEST_MD
@@ -269,7 +270,7 @@ def build_markdown(
     lines = [
         "# 连板晋级预测 · 滚动回测",
         "",
-        f"- 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"- 生成时间（北京时间）：{beijing_now_str()}",
         f"- 数据源：`{data_source_label(cfg)}`",
         f"- 交易日范围：{days_asc[0]} ~ {days_asc[-1]}（共 {len(days_asc)} 个交易日）",
         f"- 滚动验证：最近 {s.get('validate_pairs', '-')} 对相邻日（数据源可用范围内尽可能多），"
@@ -358,7 +359,7 @@ def build_detail_markdown(records: list[dict]) -> str:
     lines = [
         "# 连板滚动验证明细",
         "",
-        f"- 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"- 生成时间（北京时间）：{beijing_now_str()}",
         f"- 共 {len(records)} 条（T 日连板股 → T+1 是否晋级）",
         "",
         "| T 日 | T+1 | 代码 | 名称 | 连板 | 预测(旧) | 预测(校准) | 实际 |",

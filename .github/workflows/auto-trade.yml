@@ -1,23 +1,22 @@
 name: AutoTrade
 
-## --------------------------------------------------------- ##
-## ┌───────────── minute (0 - 59)
-## │ ┌───────────── hour (0 - 23)
-## │ │ ┌───────────── day of the month (1 - 31)
-## │ │ │ ┌───────────── month (1 - 12 or JAN-DEC)
-## │ │ │ │ ┌───────────── day of the week (0 - 6 or SUN-SAT)
-## │ │ │ │ │
-## │ │ │ │ │
-## │ │ │ │ │
-## * * * * *
-## '50 15 * * *'
-## --------------------------------------------------------- ##
+# GitHub Actions 的 cron 始终为 UTC（不是北京时间）。
+# 若需按 A 股交易时段触发，请用 UTC = 北京时间 - 8 小时。
+#
+# | 北京时间（周一至五） | UTC cron           |
+# |---------------------|--------------------|
+# | 09:25 盘前          | 25 1 * * 1-5       |
+# | 13:00 午盘          | 0 5 * * 1-5        |
+# | 15:00 收盘          | 0 7 * * 1-5        |
 
 on:
   schedule:
-    - cron: '01 * * * *'
-    - cron: '25 9,13 * * 1,5'
-    - cron: '00 13,15 * * 1,5'
+    - cron: "25 1 * * 1-5"
+    - cron: "0 5 * * 1-5"
+    - cron: "0 7 * * 1-5"
+
+env:
+  TZ: Asia/Shanghai
 
 jobs:
   build:
@@ -36,13 +35,9 @@ jobs:
         run: |
           pip install -r requirements.txt
 
-      - name: Not on weekend
-        if: github.event.schedule != '30 5 * * 0,6'
-        run: echo "This step will be skipped on weekend"
-      - name: Not on national holiday
-        if: github.event.schedule != '30 5 * * 0,6'
-        run: echo "This step will be skipped on weekend"
-      
+      - name: Log Beijing time
+        run: echo "Beijing time $(date '+%Y-%m-%d %H:%M:%S %Z')"
+
       - name: Every trade day
         run: |
           ./.github/scripts/run_all.sh --test
@@ -57,7 +52,7 @@ jobs:
         env:
           PLIVO_AUTH_ID: ${{ secrets.PLIVO_AUTH_ID }}
           PLIVO_AUTH_TOKEN: ${{ secrets.PLIVO_AUTH_TOKEN }}
-  
+
   # updates:
   #   name: 'Update annual national holiday'
   #   runs-on: ubuntu-latest

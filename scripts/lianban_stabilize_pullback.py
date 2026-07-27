@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lianban_jinji_weekly import is_st_or_delist
 from lianban_paths import DAILY_DIR, STABILIZE_MD, ensure_doc_dir, list_daily_dates
 from lianban_similar import assign_theme
+from lianban_time import beijing_now_iso, beijing_now_str, beijing_today_str
 
 OUT_MD = STABILIZE_MD
 OUT_JSON = OUT_MD.with_suffix(".json")
@@ -711,7 +712,7 @@ def build_markdown(
     lines = [
         "# 连板回踩企稳扫描",
         "",
-        f"> 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  ",
+        f"> 生成时间（北京时间）：{beijing_now_str()}  ",
         f"> 扫描日 K 截止：**{scan_date}**  ",
         f"> 连板历史窗口：近 **{params.trade_days}** 个交易日（本地 `每日/` JSON）  ",
         (
@@ -882,10 +883,10 @@ def main(argv: list[str] | None = None) -> int:
 
     hits, universe = run_scan(params)
     near_miss = build_near_miss(universe, NEAR_MISS_CODES, params)
-    scan_date = max((h["K线日期"] for h in hits), default=datetime.now().strftime("%Y%m%d"))
+    scan_date = max((h["K线日期"] for h in hits), default=beijing_today_str())
 
     payload = {
-        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "generated_at": beijing_now_iso(),
         "scan_date": scan_date,
         "params": params.as_dict(),
         "count": len(hits),

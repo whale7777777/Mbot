@@ -24,6 +24,7 @@ from lianban_paths import (
     latest_daily_json,
     list_daily_dates,
 )
+from lianban_time import beijing_now_str
 
 
 def _read_json(path: Path) -> dict | None:
@@ -46,7 +47,7 @@ def _fmt_pct(x) -> str:
 
 def build_overview() -> str:
     ensure_doc_dir()
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = beijing_now_str()
     calib = _read_json(CALIB_JSON)
     latest_path = latest_daily_json()
     today = _read_json(latest_path) if latest_path else None
@@ -55,7 +56,7 @@ def build_overview() -> str:
     lines = [
         "# 连板数据总览",
         "",
-        f"> 自动生成于 {now}，请运行 `python scripts/lianban.py publish`",
+        f"> 自动生成于 {now}（北京时间），请运行 `python scripts/lianban.py publish`",
         "",
         "## 文档索引",
         "",
