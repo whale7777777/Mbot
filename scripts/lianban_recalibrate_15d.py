@@ -21,6 +21,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from lianban_jinji_weekly import fetch_zt_pool, normalize_frame
+from lianban_time import beijing_now_str
 from lianban_lib import (
     FACTOR_KEYS,
     FACTOR_LABELS,
@@ -190,7 +191,7 @@ def build_report(
     lines = [
         "# 晋级概率校准分析（近 15 交易日实证）",
         "",
-        f"- 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"- 生成时间（北京时间）：{beijing_now_str()}",
         f"- 交易日：{days[0]} ~ {days[-1]}（{len(days)} 日）",
         f"- 可验证相邻日对：{len(days) - 1} 对",
         f"- 逐股样本（T 日连板≥2，有预测值）：**{len(records)}** 只",

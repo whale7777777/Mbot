@@ -31,6 +31,7 @@ except ImportError:
     sys.exit(1)
 
 from lianban_paths import DOC_DIR, WEEKLY_MD, ensure_doc_dir
+from lianban_time import beijing_now_str, today_beijing
 
 OUT_DIR = DOC_DIR
 OUT_MD = WEEKLY_MD
@@ -95,7 +96,7 @@ def normalize_frame(df: pd.DataFrame) -> pd.DataFrame | None:
 
 def iter_recent_trading_days_with_data(max_calendar_days: int = 20) -> list[str]:
     """从昨天起向前尝试，返回有涨停池数据的日期 YYYYMMDD（新到旧）。"""
-    end = datetime.now().date()
+    end = today_beijing()
     found: list[str] = []
     for i in range(1, max_calendar_days + 1):
         d = end - timedelta(days=i)
@@ -178,7 +179,7 @@ def build_report(
     lines = [
         "# 连板晋级率跟踪（自动生成）",
         "",
-        f"- 生成时间（本地）：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"- 生成时间（北京时间）：{beijing_now_str()}",
         "- 数据源：`akshare.stock_zt_pool_em`（东方财富涨停池）",
         "- 晋级定义：T 日连板数为 n 的个股，T+1 日仍在涨停池且连板数为 n+1。",
         "- 已剔除名称以 ST、*ST 开头及名称含「退」的样本。",
