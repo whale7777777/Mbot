@@ -23,7 +23,6 @@ ROOT = SCRIPTS_DIR.parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 from lianban_paths import CONFIG_EXAMPLE, CONFIG_PATH, ensure_doc_dir
-from lianban_time import beijing_today_str
 
 PROJECT_CONFIG = ROOT / "utils" / "configure" / "config.json"
 
@@ -153,7 +152,112 @@ def fetch_zt_pool_tushare(date_yyyymmdd: str, token: str) -> pd.DataFrame | None
     return out
 
 
+def _fetch_zt_pool_em_requests(date_yyyymmdd: str, timeout: float = 25.0) -> pd.DataFrame | None:
+    """东方财富涨停池直连（带超时），避免 akshare 无 timeout 时长时间挂起。"""
+    import requests
+
+    url = "https://push2ex.eastmoney.com/getTopicZTPool"
+    params = {
+        "ut": "7eea3edcaed734bea9cbfc24409ed989",
+        "dpt": "wz.ztzt",
+        "Pageindex": "0",
+        "pagesize": "10000",
+        "sort": "fbt:asc",
+        "date": date_yyyymmdd,
+    }
+    last_exc: Exception | None = None
+    data_json: dict[str, Any] | None = None
+    for attempt in range(3):
+        try:
+            r = requests.get(
+                url,
+                params=params,
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=timeout,
+            )
+            r.raise_for_status()
+            data_json = r.json()
+            break
+        except Exception as exc:  # noqa: BLE001 — 网络重试
+            last_exc = exc
+            print(
+                f"[em] {date_yyyymmdd} 直连第 {attempt + 1}/3 失败: {exc}",
+                file=sys.stderr,
+            )
+    if data_json is None:
+        if last_exc is not None:
+            raise last_exc
+        return None
+    if not data_json.get("data") or not data_json["data"].get("pool"):
+        return pd.DataFrame()
+    temp_df = pd.DataFrame(data_json["data"]["pool"])
+    temp_df.reset_index(inplace=True)
+    temp_df["index"] = range(1, len(temp_df) + 1)
+    temp_df.columns = [
+        "序号",
+        "代码",
+        "_",
+        "名称",
+        "最新价",
+        "涨跌幅",
+        "成交额",
+        "流通市值",
+        "总市值",
+        "换手率",
+        "连板数",
+        "首次封板时间",
+        "最后封板时间",
+        "封板资金",
+        "炸板次数",
+        "所属行业",
+        "涨停统计",
+    ]
+    temp_df["涨停统计"] = (
+        temp_df["涨停统计"].apply(lambda x: dict(x)["days"]).astype(str)
+        + "/"
+        + temp_df["涨停统计"].apply(lambda x: dict(x)["ct"]).astype(str)
+    )
+    temp_df = temp_df[
+        [
+            "序号",
+            "代码",
+            "名称",
+            "涨跌幅",
+            "最新价",
+            "成交额",
+            "流通市值",
+            "总市值",
+            "换手率",
+            "封板资金",
+            "首次封板时间",
+            "最后封板时间",
+            "炸板次数",
+            "涨停统计",
+            "连板数",
+            "所属行业",
+        ]
+    ]
+    temp_df["首次封板时间"] = temp_df["首次封板时间"].astype(str).str.zfill(6)
+    temp_df["最后封板时间"] = temp_df["最后封板时间"].astype(str).str.zfill(6)
+    temp_df["最新价"] = temp_df["最新价"] / 1000
+    for col in ("涨跌幅", "最新价", "成交额", "流通市值", "总市值", "换手率", "封板资金", "炸板次数", "连板数"):
+        temp_df[col] = pd.to_numeric(temp_df[col], errors="coerce")
+    return temp_df
+
+
 def fetch_zt_pool_em(date_yyyymmdd: str) -> pd.DataFrame | None:
+    # 优先直连（带超时）；失败再回退 akshare
+    try:
+        df = _fetch_zt_pool_em_requests(date_yyyymmdd)
+        if df is not None and not df.empty:
+            df = df.copy()
+            df.attrs["source"] = "em"
+            return df
+        if df is not None and df.empty:
+            return None
+    except Exception as exc:
+        print(f"[em] {date_yyyymmdd} 直连失败，回退 akshare: {exc}", file=sys.stderr)
+
     try:
         import akshare as ak
 
@@ -203,7 +307,7 @@ def get_open_trade_dates(
     """
     cfg = cfg or load_lianban_config()
     source = str(cfg.get("data_source", "em")).lower()
-    end = end_date or beijing_today_str()
+    end = end_date or datetime.now().strftime("%Y%m%d")
 
     if source in ("em", "akshare", "eastmoney"):
         pass  # 下方按涨停池扫描交易日
